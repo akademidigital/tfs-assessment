@@ -1,11 +1,12 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ClipboardList } from "lucide-react";
 import platformLogo from "@/assets/tfs-platform-logo.png";
 import brandLogo from "@/assets/powered-by-akademi-taruna.png";
-import { registerParticipantFn } from "@/lib/assessment.functions";
+import { getDashboard, registerParticipantFn } from "@/lib/assessment.functions";
 import { clearParticipant, setParticipant } from "@/lib/participant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
@@ -155,7 +156,9 @@ function SelectField({
 
 function Daftar() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const register = useServerFn(registerParticipantFn);
+  const fetchDashboard = useServerFn(getDashboard);
 
   useEffect(() => {
     clearParticipant();
@@ -260,6 +263,11 @@ function Daftar() {
       setParticipant(created.participantId, created.code);
       toast.success(`Pendaftaran berhasil. Kode peserta Anda: ${created.code}`, {
         duration: 8000,
+      });
+      // Prefetch dashboard query into React Query so /sub-tests renders instantly
+      await queryClient.prefetchQuery({
+        queryKey: ["dashboard", created.participantId],
+        queryFn: () => fetchDashboard({ data: { participantId: created.participantId } }),
       });
       router.navigate({ to: "/sub-tests" });
     } catch (err) {

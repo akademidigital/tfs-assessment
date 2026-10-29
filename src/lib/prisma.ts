@@ -14,7 +14,7 @@ let cleanUrl = rawUrl.trim().replace(/^["']|["']$/g, "");
 if (cleanUrl) {
   if (!cleanUrl.includes("connection_limit=")) {
     const separator = cleanUrl.includes("?") ? "&" : "?";
-    cleanUrl = `${cleanUrl}${separator}connection_limit=2&pool_timeout=20`;
+    cleanUrl = `${cleanUrl}${separator}connection_limit=5&pool_timeout=30`;
   }
   process.env["DATABASE_URL"] = cleanUrl;
 }

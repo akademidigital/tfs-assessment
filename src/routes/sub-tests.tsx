@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect } from "react";
 import {
@@ -16,7 +16,7 @@ import {
   Target,
   Users,
 } from "lucide-react";
-import { getDashboard } from "@/lib/assessment.functions";
+import { getDashboard, getModule, getModuleResult } from "@/lib/assessment.functions";
 import { useParticipantId } from "@/hooks/use-participant";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
@@ -55,7 +55,11 @@ const ICONS: Record<string, typeof Brain> = {
 function SubTests() {
   const router = useRouter();
   const participantId = useParticipantId();
+  const queryClient = useQueryClient();
   const fetchDashboard = useServerFn(getDashboard);
+  const fetchModule = useServerFn(getModule);
+  const fetchResult = useServerFn(getModuleResult);
+
   const { data, isPending, error } = useQuery({
     queryKey: ["dashboard", participantId],
     queryFn: () => fetchDashboard({ data: { participantId: participantId! } }),
@@ -71,6 +75,19 @@ function SubTests() {
   const modules = data?.modules ?? [];
   const completed = modules.filter((m) => m.status === "completed").length;
   const pct = modules.length > 0 ? Math.round((completed / modules.length) * 100) : 0;
+
+  // Background prefetch the next active module so clicking "Mulai" is instant (0ms delay)
+  useEffect(() => {
+    if (!participantId || !modules.length) return;
+    const nextMod = modules.find((m) => m.status !== "completed");
+    if (nextMod) {
+      void queryClient.prefetchQuery({
+        queryKey: ["module", nextMod.code, participantId],
+        queryFn: () => fetchModule({ data: { moduleCode: nextMod.code, participantId } }),
+        staleTime: 5 * 60 * 1000,
+      });
+    }
+  }, [participantId, modules, queryClient, fetchModule]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -153,7 +170,28 @@ function SubTests() {
                             variant="outline"
                             className="w-full"
                           >
-                            <Link to="/result/$moduleCode" params={{ moduleCode: m.code }}>
+                            <Link
+                              to="/result/$moduleCode"
+                              params={{ moduleCode: m.code }}
+                              onMouseEnter={() => {
+                                if (participantId) {
+                                  void queryClient.prefetchQuery({
+                                    queryKey: ["module-result", m.code, participantId],
+                                    queryFn: () => fetchResult({ data: { moduleCode: m.code, participantId } }),
+                                    staleTime: 5 * 60 * 1000,
+                                  });
+                                }
+                              }}
+                              onTouchStart={() => {
+                                if (participantId) {
+                                  void queryClient.prefetchQuery({
+                                    queryKey: ["module-result", m.code, participantId],
+                                    queryFn: () => fetchResult({ data: { moduleCode: m.code, participantId } }),
+                                    staleTime: 5 * 60 * 1000,
+                                  });
+                                }
+                              }}
+                            >
                               <BarChart3 className="mr-2 size-4" /> Lihat Hasil
                             </Link>
                           </Button>
@@ -162,7 +200,28 @@ function SubTests() {
                         <div className="mt-auto space-y-3">
                           {m.answered > 0 ? <Progress value={mp} className="h-1.5" /> : null}
                           <Button asChild className="w-full">
-                            <Link to="/assessment/$moduleCode" params={{ moduleCode: m.code }}>
+                            <Link
+                              to="/assessment/$moduleCode"
+                              params={{ moduleCode: m.code }}
+                              onMouseEnter={() => {
+                                if (participantId) {
+                                  void queryClient.prefetchQuery({
+                                    queryKey: ["module", m.code, participantId],
+                                    queryFn: () => fetchModule({ data: { moduleCode: m.code, participantId } }),
+                                    staleTime: 5 * 60 * 1000,
+                                  });
+                                }
+                              }}
+                              onTouchStart={() => {
+                                if (participantId) {
+                                  void queryClient.prefetchQuery({
+                                    queryKey: ["module", m.code, participantId],
+                                    queryFn: () => fetchModule({ data: { moduleCode: m.code, participantId } }),
+                                    staleTime: 5 * 60 * 1000,
+                                  });
+                                }
+                              }}
+                            >
                               <Play className="mr-2 size-4" />
                               {m.answered > 0 ? "Lanjutkan" : "Mulai"}
                             </Link>

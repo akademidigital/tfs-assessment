@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "test:simulate": "node simulate-300-students.mjs",
+    "test:cleanup": "node cleanup-test-data.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

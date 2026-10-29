@@ -45,6 +45,7 @@ function AssessmentPage() {
     queryKey: ["module", moduleCode, participantId],
     queryFn: () => fetchModule({ data: { moduleCode, participantId: participantId! } }),
     enabled: Boolean(participantId),
+    staleTime: 60 * 1000,
   });
 
   const [answers, setAnswers] = useState<Record<string, number>>({});
@@ -293,7 +294,7 @@ function AssessmentPage() {
             <span>Gagal menyimpan.</span>
             <button
               className="inline-flex items-center gap-1 underline"
-              onClick={() => void finalizeModule(answers)}
+              onClick={() => void finalizeModule()}
             >
               <RefreshCw className="size-3" /> Coba lagi
             </button>
