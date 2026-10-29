@@ -64,40 +64,24 @@ function AssessmentPage() {
   const question = data?.questions[index];
   const needsDisclaimer = Boolean(data?.module.isSensitive) && !acknowledged && answeredCount === 0;
 
-  async function commit(questionId: string, value: number) {
+  async function commit(questionId: string, value: number, isLastItem = false) {
     if (!participantId) return;
     setSaveState("saving");
     setPending({ questionId, value });
     let lastError: unknown = null;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const res = await save({ data: { questionId, value, participantId: participantId! } });
-        const nextAnswers = { ...answers, [questionId]: value };
-        setAnswers(nextAnswers);
+        const res = await save({ data: { questionId, value, participantId } });
         setSaveState("saved");
         setPending(null);
-        if (res.moduleCompleted) {
+        if (res.moduleCompleted || isLastItem) {
           router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
           return;
-        }
-        const questions = data?.questions ?? [];
-        // Jump to the next unanswered item (it may sit before the current one),
-        // so a skipped question can never leave the participant stuck at the end.
-        const forward = questions.findIndex((q, i) => i > index && !(q.id in nextAnswers));
-        const target =
-          forward !== -1 ? forward : questions.findIndex((q) => !(q.id in nextAnswers));
-        if (target !== -1) {
-          setIndex(target);
-        } else {
-          const fresh = await refetch();
-          if (fresh.data?.status === "completed") {
-            router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
-          }
         }
         return;
       } catch (err) {
         lastError = err;
-        await new Promise((r) => setTimeout(r, 400 * 2 ** attempt));
+        await new Promise((r) => setTimeout(r, 300 * 2 ** attempt));
       }
     }
     console.error(lastError);
@@ -105,8 +89,26 @@ function AssessmentPage() {
   }
 
   function choose(value: number) {
-    if (!question || saveState === "saving") return;
-    void commit(question.id, value);
+    if (!question) return;
+    const questionId = question.id;
+    const nextAnswers = { ...answers, [questionId]: value };
+
+    // 1. Instant optimistic state update (0ms UI latency)
+    setAnswers(nextAnswers);
+
+    // 2. Instant jump to next unanswered question
+    const questions = data?.questions ?? [];
+    const forward = questions.findIndex((q, i) => i > index && !(q.id in nextAnswers));
+    const target = forward !== -1 ? forward : questions.findIndex((q) => !(q.id in nextAnswers));
+
+    const isLastItem = target === -1 && Object.keys(nextAnswers).length >= total;
+
+    if (target !== -1) {
+      setIndex(target);
+    }
+
+    // 3. Save to server in background
+    void commit(questionId, value, isLastItem);
   }
 
   const pct = total > 0 ? Math.round((answeredCount / total) * 100) : 0;
@@ -142,7 +144,7 @@ function AssessmentPage() {
               Gagal menyimpan.
               <button
                 className="inline-flex items-center gap-1 underline"
-                onClick={() => pending && commit(pending.questionId, pending.value)}
+                onClick={() => pending && commit(pending.questionId, pending.value, false)}
               >
                 <RefreshCw className="size-3" /> Coba lagi
               </button>
@@ -206,7 +208,6 @@ function AssessmentPage() {
                   return (
                     <button
                       key={value}
-                      disabled={saveState === "saving"}
                       onClick={() => choose(value)}
                       aria-label={`Pilih ${value}`}
                       className={cn(

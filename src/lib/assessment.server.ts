@@ -200,54 +200,82 @@ export async function loadModule(userId: string, moduleCode: string) {
   };
 }
 
+// In-memory caches to eliminate unnecessary roundtrips
+const questionMetaCache = new Map<
+  string,
+  { id: string; moduleId: string; dimensionId: string; direction: string }
+>();
+
+interface CachedSession {
+  session: Awaited<ReturnType<typeof requireOwnSession>>;
+  expiresAt: number;
+}
+const userSessionCache = new Map<string, CachedSession>();
+
+async function getCachedSession(userId: string) {
+  const cached = userSessionCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.session;
+  }
+  const session = await requireOwnSession(userId);
+  userSessionCache.set(userId, { session, expiresAt: Date.now() + 5 * 60 * 1000 });
+  return session;
+}
+
 export async function persistAnswer(userId: string, questionId: string, answerValue: number) {
   if (!Number.isInteger(answerValue) || answerValue < 1 || answerValue > 5) {
     throw new Error("Nilai jawaban tidak valid.");
   }
-  const session = await requireOwnSession(userId);
+  const session = await getCachedSession(userId);
 
-  const q = await prisma.assessmentQuestion.findUnique({
-    where: { id: questionId },
-    select: { id: true, moduleId: true, dimensionId: true, direction: true },
-  });
-  if (!q) throw new Error("Item tidak ditemukan.");
+  let q = questionMetaCache.get(questionId);
+  if (!q) {
+    const dbQ = await prisma.assessmentQuestion.findUnique({
+      where: { id: questionId },
+      select: { id: true, moduleId: true, dimensionId: true, direction: true },
+    });
+    if (!dbQ) throw new Error("Item tidak ditemukan.");
+    q = dbQ;
+    questionMetaCache.set(questionId, q);
+  }
 
   const scored = scoreAnswer(q.direction as "F" | "UF", answerValue);
 
-  await prisma.assessmentAnswer.upsert({
-    where: {
-      sessionId_questionId: {
+  // Batch upsert and progress check together in a single transaction
+  const [, answeredCount, progress] = await prisma.$transaction([
+    prisma.assessmentAnswer.upsert({
+      where: {
+        sessionId_questionId: {
+          sessionId: session.id,
+          questionId: questionId,
+        },
+      },
+      create: {
         sessionId: session.id,
         questionId: questionId,
-      },
-    },
-    create: {
-      sessionId: session.id,
-      questionId: questionId,
-      moduleId: q.moduleId,
-      answerValue,
-      scoredValue: scored,
-    },
-    update: {
-      answerValue,
-      scoredValue: scored,
-      answeredAt: new Date(),
-    },
-  });
-
-  const answeredCount = await prisma.assessmentAnswer.count({
-    where: { sessionId: session.id, moduleId: q.moduleId },
-  });
-
-  const progress = await prisma.moduleProgress.findUnique({
-    where: {
-      sessionId_moduleId: {
-        sessionId: session.id,
         moduleId: q.moduleId,
+        answerValue,
+        scoredValue: scored,
       },
-    },
-    select: { totalItems: true },
-  });
+      update: {
+        answerValue,
+        scoredValue: scored,
+        answeredAt: new Date(),
+      },
+    }),
+    prisma.assessmentAnswer.count({
+      where: { sessionId: session.id, moduleId: q.moduleId },
+    }),
+    prisma.moduleProgress.findUnique({
+      where: {
+        sessionId_moduleId: {
+          sessionId: session.id,
+          moduleId: q.moduleId,
+        },
+      },
+      select: { totalItems: true },
+    }),
+  ]);
 
   const totalItems = progress?.totalItems ?? 0;
   const moduleCompleted = totalItems > 0 && answeredCount >= totalItems;
@@ -608,28 +636,28 @@ function normalizePhone(v: string) {
 
 function mapProfileInput(input: Record<string, unknown>) {
   const output: Record<string, unknown> = {};
-  if ("full_name" in input) output.fullName = input.full_name;
-  if ("gender" in input) output.gender = input.gender;
-  if ("class_level" in input) output.classLevel = input.class_level;
-  if ("school_name" in input) output.schoolName = input.school_name;
-  if ("major" in input) output.major = input.major;
-  if ("city" in input) output.city = input.city;
-  if ("whatsapp" in input) output.whatsapp = input.whatsapp;
-  if ("email" in input) output.email = input.email;
-  if ("birth_place" in input) output.birthPlace = input.birth_place;
+  if ("full_name" in input) output["fullName"] = input["full_name"];
+  if ("gender" in input) output["gender"] = input["gender"];
+  if ("class_level" in input) output["classLevel"] = input["class_level"];
+  if ("school_name" in input) output["schoolName"] = input["school_name"];
+  if ("major" in input) output["major"] = input["major"];
+  if ("city" in input) output["city"] = input["city"];
+  if ("whatsapp" in input) output["whatsapp"] = input["whatsapp"];
+  if ("email" in input) output["email"] = input["email"];
+  if ("birth_place" in input) output["birthPlace"] = input["birth_place"];
   if ("birth_date" in input) {
-    output.birthDate = input.birth_date ? new Date(String(input.birth_date)) : null;
+    output["birthDate"] = input["birth_date"] ? new Date(String(input["birth_date"])) : null;
   }
-  if ("height_cm" in input) output.heightCm = input.height_cm;
-  if ("weight_kg" in input) output.weightKg = input.weight_kg;
-  if ("guardian_name" in input) output.guardianName = input.guardian_name;
-  if ("guardian_whatsapp" in input) output.guardianWhatsapp = input.guardian_whatsapp;
-  if ("target_institution" in input) output.targetInstitution = input.target_institution;
-  if ("career_target" in input) output.careerTarget = input.career_target;
-  if ("referral_source" in input) output.referralSource = input.referral_source;
-  if ("consent_version" in input) output.consentVersion = input.consent_version;
+  if ("height_cm" in input) output["heightCm"] = input["height_cm"];
+  if ("weight_kg" in input) output["weightKg"] = input["weight_kg"];
+  if ("guardian_name" in input) output["guardianName"] = input["guardian_name"];
+  if ("guardian_whatsapp" in input) output["guardianWhatsapp"] = input["guardian_whatsapp"];
+  if ("target_institution" in input) output["targetInstitution"] = input["target_institution"];
+  if ("career_target" in input) output["careerTarget"] = input["career_target"];
+  if ("referral_source" in input) output["referralSource"] = input["referral_source"];
+  if ("consent_version" in input) output["consentVersion"] = input["consent_version"];
   if ("consent_at" in input) {
-    output.consentAt = input.consent_at ? new Date(String(input.consent_at)) : null;
+    output["consentAt"] = input["consent_at"] ? new Date(String(input["consent_at"])) : null;
   }
   return output;
 }
