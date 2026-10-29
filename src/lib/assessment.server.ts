@@ -145,9 +145,14 @@ export async function saveProfileData(
 }
 
 async function requireOwnSession(userId: string) {
-  const { session } = await ensureSession(userId);
-  if (session.userId !== userId) throw new Error("Unauthorized");
-  return session;
+  const session = await prisma.assessmentSession.findFirst({
+    where: { userId, status: "in_progress" },
+    orderBy: { startedAt: "desc" },
+  });
+  if (session) return session;
+
+  const { session: newSession } = await ensureSession(userId);
+  return newSession;
 }
 
 export async function loadModule(userId: string, moduleCode: string) {
@@ -234,10 +239,17 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
     where: { sessionId: session.id, moduleId: q.moduleId },
   });
 
-  const totalItems = await prisma.assessmentQuestion.count({
-    where: { moduleId: q.moduleId, active: true },
+  const progress = await prisma.moduleProgress.findUnique({
+    where: {
+      sessionId_moduleId: {
+        sessionId: session.id,
+        moduleId: q.moduleId,
+      },
+    },
+    select: { totalItems: true },
   });
 
+  const totalItems = progress?.totalItems ?? 0;
   const moduleCompleted = totalItems > 0 && answeredCount >= totalItems;
 
   await prisma.moduleProgress.update({
@@ -249,7 +261,6 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
     },
     data: {
       answeredCount,
-      totalItems,
       status: moduleCompleted ? "completed" : "in_progress",
       startedAt: new Date(),
       completedAt: moduleCompleted ? new Date() : null,
