@@ -58,13 +58,20 @@ function SubTests() {
   const participantId = useParticipantId();
   const fetchDashboard = useServerFn(getDashboard);
   const fetchModuleResult = useServerFn(getModuleResult);
-  const { data, isPending, error } = useQuery({
+  const { data, isPending, error, refetch } = useQuery({
     queryKey: ["dashboard", participantId],
     queryFn: () => fetchDashboard({ data: { participantId: participantId! } }),
     enabled: Boolean(participantId),
     staleTime: 0,
     refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   });
+
+  useEffect(() => {
+    if (participantId) {
+      void refetch();
+    }
+  }, [participantId, refetch]);
 
   useEffect(() => {
     if (data && !data.profile.consentAt) router.navigate({ to: "/daftar" });

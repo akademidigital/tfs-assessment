@@ -167,6 +167,30 @@ function AssessmentPage() {
         );
       }
 
+      // Optimistically update the dashboard cache so returning to /sub-tests is instant
+      queryClient.setQueryData(["dashboard", participantId], (old: any) => {
+        if (!old || !Array.isArray(old.modules)) return old;
+        const normalized = res.result?.result?.normalized;
+        const category = res.result?.result?.category;
+        const updatedModules = old.modules.map((m: any) =>
+          m.code === moduleCode
+            ? {
+                ...m,
+                status: "completed",
+                answered: m.total,
+                score: typeof normalized === "number" ? Math.round(normalized) : m.score,
+                category: category ?? m.category,
+              }
+            : m,
+        );
+        const allCompleted = updatedModules.every((m: any) => m.status === "completed");
+        return {
+          ...old,
+          modules: updatedModules,
+          allCompleted,
+        };
+      });
+
       void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
     } catch (err) {

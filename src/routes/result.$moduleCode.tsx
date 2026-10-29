@@ -52,6 +52,7 @@ function ModuleResult() {
             to="/sub-tests"
             onClick={() => {
               void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+              void queryClient.refetchQueries({ queryKey: ["dashboard"] });
             }}
           >
             <ArrowLeft className="mr-2 size-4" /> Kembali ke modul
