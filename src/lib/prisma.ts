@@ -7,9 +7,15 @@ const globalForPrisma = globalThis as unknown as {
 
 // Auto-clean DATABASE_URL in case quotes or extra spaces were included in env
 const rawUrl = process.env["DATABASE_URL"] ?? "";
-const cleanUrl = rawUrl.trim().replace(/^["']|["']$/g, "");
+let cleanUrl = rawUrl.trim().replace(/^["']|["']$/g, "");
 
+// In serverless environments (Vercel) with high concurrency (e.g. 200 concurrent students),
+// ensure connection_limit is safe to prevent exhausting Supabase / PgBouncer pool limits.
 if (cleanUrl) {
+  if (!cleanUrl.includes("connection_limit=")) {
+    const separator = cleanUrl.includes("?") ? "&" : "?";
+    cleanUrl = `${cleanUrl}${separator}connection_limit=2&pool_timeout=20`;
+  }
   process.env["DATABASE_URL"] = cleanUrl;
 }
 
@@ -23,4 +29,5 @@ if (cleanUrl) {
 
 export const prisma = globalForPrisma.prisma ?? new PrismaClient(prismaOptions);
 
-if (process.env["NODE_ENV"] !== "production") globalForPrisma.prisma = prisma;
+// Always reuse prisma client instance across warm serverless invocations
+globalForPrisma.prisma = prisma;

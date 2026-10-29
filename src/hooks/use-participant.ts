@@ -6,7 +6,7 @@ import { getParticipantId } from "@/lib/participant";
  * registration form when none exists yet. */
 export function useParticipantId() {
   const router = useRouter();
-  const [participantId, setParticipantId] = useState<string | null>(null);
+  const [participantId, setParticipantId] = useState<string | null>(() => getParticipantId());
 
   useEffect(() => {
     const stored = getParticipantId();
@@ -14,8 +14,10 @@ export function useParticipantId() {
       router.navigate({ to: "/daftar" });
       return;
     }
-    setParticipantId(stored);
-  }, [router]);
+    if (stored !== participantId) {
+      setParticipantId(stored);
+    }
+  }, [router, participantId]);
 
   return participantId;
 }

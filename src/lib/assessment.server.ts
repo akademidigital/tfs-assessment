@@ -9,13 +9,19 @@ import {
   type Band,
 } from "./scoring";
 
+let cachedPublishedVersionId: { id: string; expiresAt: number } | null = null;
+
 async function publishedVersionId(): Promise<string> {
+  if (cachedPublishedVersionId && cachedPublishedVersionId.expiresAt > Date.now()) {
+    return cachedPublishedVersionId.id;
+  }
   const data = await prisma.contentVersion.findFirst({
     where: { status: "published" },
     orderBy: { publishedAt: "desc" },
     select: { id: true },
   });
   if (!data) throw new Error("Belum ada versi konten yang dipublikasikan.");
+  cachedPublishedVersionId = { id: data.id, expiresAt: Date.now() + 10 * 60 * 1000 };
   return data.id;
 }
 
@@ -47,23 +53,24 @@ export async function ensureSession(userId: string) {
   }
   if (!session) throw new Error("Gagal membuat sesi asesmen.");
 
-  const modules = await prisma.assessmentModule.findMany({
-    where: { versionId, active: true },
-    orderBy: { sequence: "asc" },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      description: true,
-      sequence: true,
-      estimatedMinutes: true,
-      isSensitive: true,
-    },
-  });
-
-  const progress = await prisma.moduleProgress.findMany({
-    where: { sessionId: session.id },
-  });
+  const [modules, progress] = await Promise.all([
+    prisma.assessmentModule.findMany({
+      where: { versionId, active: true },
+      orderBy: { sequence: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        sequence: true,
+        estimatedMinutes: true,
+        isSensitive: true,
+      },
+    }),
+    prisma.moduleProgress.findMany({
+      where: { sessionId: session.id },
+    }),
+  ]);
 
   const missing = modules.filter((m) => !progress.some((p) => p.moduleId === m.id));
   if (missing.length > 0) {
@@ -80,6 +87,18 @@ export async function ensureSession(userId: string) {
       }),
     );
     await prisma.moduleProgress.createMany({ data: counts });
+    counts.forEach((c) => {
+      progress.push({
+        id: "",
+        sessionId: c.sessionId,
+        moduleId: c.moduleId,
+        status: "not_started",
+        answeredCount: 0,
+        totalItems: c.totalItems,
+        startedAt: null,
+        completedAt: null,
+      });
+    });
   }
 
   // Self-heal totalItems if session was created before question bank was seeded
@@ -91,6 +110,7 @@ export async function ensureSession(userId: string) {
           where: { moduleId: p.moduleId, active: true },
         });
         if (count > 0) {
+          p.totalItems = count;
           await prisma.moduleProgress.update({
             where: { id: p.id },
             data: { totalItems: count },
@@ -100,15 +120,14 @@ export async function ensureSession(userId: string) {
     );
   }
 
-  return { session, versionId, modules };
+  return { session, versionId, modules, progress };
 }
 
 export async function loadDashboard(userId: string, email?: string, fullName?: string) {
-  const profile = await ensureProfile(userId, email, fullName);
-  const { session, modules } = await ensureSession(userId);
-  const progress = await prisma.moduleProgress.findMany({
-    where: { sessionId: session.id },
-  });
+  const [profile, { session, modules, progress }] = await Promise.all([
+    ensureProfile(userId, email, fullName),
+    ensureSession(userId),
+  ]);
 
   const moduleResults = await prisma.assessmentResult.findMany({
     where: { sessionId: session.id },
@@ -164,7 +183,7 @@ export async function saveProfileData(
 
 async function requireOwnSession(userId: string) {
   const session = await prisma.assessmentSession.findFirst({
-    where: { userId, status: "in_progress" },
+    where: { userId },
     orderBy: { startedAt: "desc" },
   });
   if (session) return session;
@@ -188,21 +207,21 @@ export async function loadModule(userId: string, moduleCode: string) {
   });
   if (!mod) throw new Error("Modul tidak ditemukan.");
 
-  const questions = await prisma.assessmentQuestion.findMany({
-    where: { moduleId: mod.id, active: true },
-    orderBy: { sequence: "asc" },
-    select: { id: true, itemCode: true, prompt: true, sequence: true },
-  });
-
-  const answers = await prisma.assessmentAnswer.findMany({
-    where: { sessionId: session.id, moduleId: mod.id },
-    select: { questionId: true, answerValue: true },
-  });
-
-  const p = await prisma.moduleProgress.findUnique({
-    where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
-    select: { status: true, answeredCount: true, totalItems: true },
-  });
+  const [questions, answers, p] = await Promise.all([
+    prisma.assessmentQuestion.findMany({
+      where: { moduleId: mod.id, active: true },
+      orderBy: { sequence: "asc" },
+      select: { id: true, itemCode: true, prompt: true, sequence: true },
+    }),
+    prisma.assessmentAnswer.findMany({
+      where: { sessionId: session.id, moduleId: mod.id },
+      select: { questionId: true, answerValue: true },
+    }),
+    prisma.moduleProgress.findUnique({
+      where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
+      select: { status: true, answeredCount: true, totalItems: true },
+    }),
+  ]);
 
   return {
     sessionId: session.id,
@@ -325,6 +344,84 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
   return { saved: true, answeredCount, totalItems, moduleCompleted };
 }
 
+interface ModuleBlueprint {
+  questions: { id: string; dimensionId: string; direction: string }[];
+  dims: { id: string; code: string; name: string; sequence: number }[];
+  bands: Band[];
+}
+
+const moduleBlueprintCache = new Map<string, { data: ModuleBlueprint; expiresAt: number }>();
+
+async function getModuleBlueprint(moduleId: string): Promise<ModuleBlueprint> {
+  const cached = moduleBlueprintCache.get(moduleId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.data;
+  }
+
+  const [dims, questions, bands] = await Promise.all([
+    prisma.assessmentDimension.findMany({
+      where: { moduleId },
+      orderBy: { sequence: "asc" },
+      select: { id: true, code: true, name: true, sequence: true },
+    }),
+    prisma.assessmentQuestion.findMany({
+      where: { moduleId, active: true },
+      select: { id: true, dimensionId: true, direction: true },
+    }),
+    prisma.interpretationBand.findMany({
+      where: { moduleId, scope: "module" },
+      orderBy: { sequence: "asc" },
+      select: {
+        category: true,
+        minScore: true,
+        maxScore: true,
+        interpretation: true,
+        sequence: true,
+      },
+    }),
+  ]);
+
+  const parsedBands: Band[] = bands.map((b) => ({
+    category: b.category,
+    min_score: Number(b.minScore),
+    max_score: Number(b.maxScore),
+    interpretation: b.interpretation,
+    sequence: b.sequence,
+  }));
+
+  const data = { dims, questions, bands: parsedBands };
+  moduleBlueprintCache.set(moduleId, { data, expiresAt: Date.now() + 15 * 60 * 1000 });
+  return data;
+}
+
+let cachedOverallBands: { bands: Band[]; expiresAt: number } | null = null;
+
+async function getOverallBands(): Promise<Band[]> {
+  if (cachedOverallBands && cachedOverallBands.expiresAt > Date.now()) {
+    return cachedOverallBands.bands;
+  }
+  const bands = await prisma.interpretationBand.findMany({
+    where: { scope: "overall" },
+    orderBy: { sequence: "asc" },
+    select: {
+      category: true,
+      minScore: true,
+      maxScore: true,
+      interpretation: true,
+      sequence: true,
+    },
+  });
+  const parsed = bands.map((b) => ({
+    category: b.category,
+    min_score: Number(b.minScore),
+    max_score: Number(b.maxScore),
+    interpretation: b.interpretation,
+    sequence: b.sequence,
+  }));
+  cachedOverallBands = { bands: parsed, expiresAt: Date.now() + 15 * 60 * 1000 };
+  return parsed;
+}
+
 export async function persistBatchAnswers(
   userId: string,
   moduleCode: string,
@@ -339,11 +436,7 @@ export async function persistBatchAnswers(
   });
   if (!mod) throw new Error("Modul tidak ditemukan.");
 
-  const questions = await prisma.assessmentQuestion.findMany({
-    where: { moduleId: mod.id, active: true },
-    select: { id: true, direction: true },
-  });
-
+  const { questions } = await getModuleBlueprint(mod.id);
   const questionMap = new Map(questions.map((q) => [q.id, q.direction]));
   const entries = Object.entries(answers).filter(([qid]) => questionMap.has(qid));
 
@@ -377,17 +470,23 @@ export async function persistBatchAnswers(
         where: { sessionId: session.id, moduleId: mod.id },
       });
 
+      const existingProgress = await tx.moduleProgress.findUnique({
+        where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
+        select: { status: true, answeredCount: true, completedAt: true },
+      });
+
       const totalItems = questions.length;
-      const isComplete = markCompleted || (totalItems > 0 && answeredCount >= totalItems);
+      const wasCompleted = existingProgress?.status === "completed";
+      const isComplete = markCompleted || wasCompleted || (totalItems > 0 && answeredCount >= totalItems);
 
       await tx.moduleProgress.update({
         where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
         data: {
-          answeredCount,
+          answeredCount: Math.max(answeredCount, existingProgress?.answeredCount ?? 0),
           totalItems,
           status: isComplete ? "completed" : "in_progress",
           startedAt: new Date(),
-          completedAt: isComplete ? new Date() : null,
+          completedAt: isComplete ? (existingProgress?.completedAt ?? new Date()) : null,
         },
       });
     });
@@ -402,22 +501,15 @@ export async function persistBatchAnswers(
 }
 
 async function scoreModule(sessionId: string, moduleId: string) {
-  const dims = await prisma.assessmentDimension.findMany({
-    where: { moduleId },
-    orderBy: { sequence: "asc" },
-    select: { id: true, code: true, name: true, sequence: true },
-  });
+  const [blueprint, answers] = await Promise.all([
+    getModuleBlueprint(moduleId),
+    prisma.assessmentAnswer.findMany({
+      where: { sessionId, moduleId },
+      select: { questionId: true, scoredValue: true },
+    }),
+  ]);
 
-  const questions = await prisma.assessmentQuestion.findMany({
-    where: { moduleId, active: true },
-    select: { id: true, dimensionId: true },
-  });
-
-  const answers = await prisma.assessmentAnswer.findMany({
-    where: { sessionId, moduleId },
-    select: { questionId: true, scoredValue: true },
-  });
-
+  const { dims, questions, bands: parsedBands } = blueprint;
   const scoreByQuestion = new Map(answers.map((a) => [a.questionId, a.scoredValue]));
 
   const dimRows = dims.map((d) => {
@@ -438,69 +530,56 @@ async function scoreModule(sessionId: string, moduleId: string) {
   const itemCount = questions.length;
   const moduleNorm = normalize(totalRaw, itemCount);
 
-  const bands = await prisma.interpretationBand.findMany({
-    where: { moduleId, scope: "module" },
-    orderBy: { sequence: "asc" },
-    select: {
-      category: true,
-      minScore: true,
-      maxScore: true,
-      interpretation: true,
-      sequence: true,
-    },
-  });
-  const parsedBands: Band[] = bands.map((b) => ({
-    category: b.category,
-    min_score: Number(b.minScore),
-    max_score: Number(b.maxScore),
-    interpretation: b.interpretation,
-    sequence: b.sequence,
-  }));
   const band = matchBandByRaw(parsedBands, totalRaw, itemCount);
-
   const scored = dimRows.filter((d) => d.rawScore > 0 || d.normalizedScore > 0);
   const sortedDims = [...scored].sort((a, b) => b.normalizedScore - a.normalizedScore);
 
-  await prisma.dimensionResult.deleteMany({
-    where: { sessionId, moduleId },
-  });
-  if (dimRows.length > 0) {
-    await prisma.dimensionResult.createMany({
-      data: dimRows,
-    });
-  }
-
-  await prisma.assessmentResult.deleteMany({
-    where: { sessionId, moduleId },
-  });
-  await prisma.assessmentResult.create({
-    data: {
-      sessionId,
-      moduleId,
-      rawScore: totalRaw,
-      normalizedScore: moduleNorm,
-      category: band?.category ?? "Tidak Terkategori",
-      interpretation: band?.interpretation ?? "",
-      strongestDimensionId: sortedDims[0]?.dimensionId ?? null,
-      weakestDimensionId: sortedDims[sortedDims.length - 1]?.dimensionId ?? null,
-    },
-  });
+  await prisma.$transaction([
+    prisma.dimensionResult.deleteMany({
+      where: { sessionId, moduleId },
+    }),
+    ...(dimRows.length > 0
+      ? [
+          prisma.dimensionResult.createMany({
+            data: dimRows,
+          }),
+        ]
+      : []),
+    prisma.assessmentResult.deleteMany({
+      where: { sessionId, moduleId },
+    }),
+    prisma.assessmentResult.create({
+      data: {
+        sessionId,
+        moduleId,
+        rawScore: totalRaw,
+        normalizedScore: moduleNorm,
+        category: band?.category ?? "Tidak Terkategori",
+        interpretation: band?.interpretation ?? "",
+        strongestDimensionId: sortedDims[0]?.dimensionId ?? null,
+        weakestDimensionId: sortedDims[sortedDims.length - 1]?.dimensionId ?? null,
+      },
+    }),
+  ]);
 }
 
 export async function finalizeSession(userId: string) {
   const session = await requireOwnSession(userId);
 
-  const progress = await prisma.moduleProgress.findMany({
-    where: { sessionId: session.id },
-    select: { status: true },
-  });
+  const [progress, results, parsedBands] = await Promise.all([
+    prisma.moduleProgress.findMany({
+      where: { sessionId: session.id },
+      select: { status: true },
+    }),
+    prisma.assessmentResult.findMany({
+      where: { sessionId: session.id },
+      select: { normalizedScore: true },
+    }),
+    getOverallBands(),
+  ]);
+
   const complete = progress.length > 0 && progress.every((p) => p.status === "completed");
   if (!complete) return { ready: false as const };
-
-  const results = await prisma.assessmentResult.findMany({
-    where: { sessionId: session.id },
-    select: { normalizedScore: true },
-  });
 
   const readiness =
     results.length > 0
@@ -509,54 +588,38 @@ export async function finalizeSession(userId: string) {
         ) / 10
       : 0;
 
-  const bands = await prisma.interpretationBand.findMany({
-    where: { scope: "overall" },
-    orderBy: { sequence: "asc" },
-    select: {
-      category: true,
-      minScore: true,
-      maxScore: true,
-      interpretation: true,
-      sequence: true,
-    },
-  });
-  const parsedBands: Band[] = bands.map((b) => ({
-    category: b.category,
-    min_score: Number(b.minScore),
-    max_score: Number(b.maxScore),
-    interpretation: b.interpretation,
-    sequence: b.sequence,
-  }));
   const band = matchBandByScore(parsedBands, readiness);
 
-  await prisma.overallResult.deleteMany({
-    where: { sessionId: session.id },
-  });
-  await prisma.overallResult.create({
-    data: {
-      sessionId: session.id,
-      readinessScore: readiness,
-      category: band?.category ?? "Tidak Terkategori",
-      interpretation: band?.interpretation ?? "",
-    },
-  });
+  await prisma.$transaction([
+    prisma.overallResult.deleteMany({
+      where: { sessionId: session.id },
+    }),
+    prisma.overallResult.create({
+      data: {
+        sessionId: session.id,
+        readinessScore: readiness,
+        category: band?.category ?? "Tidak Terkategori",
+        interpretation: band?.interpretation ?? "",
+      },
+    }),
+    prisma.assessmentSession.update({
+      where: { id: session.id },
+      data: {
+        status: "completed",
+        scoringCalculated: true,
+        completedAt: new Date(),
+      },
+    }),
+  ]);
 
-  await prisma.assessmentSession.update({
-    where: { id: session.id },
-    data: {
-      status: "completed",
-      scoringCalculated: true,
-      completedAt: new Date(),
-    },
-  });
-
-  const report = await buildReport(userId);
-  await prisma.reportSnapshot.deleteMany({
+  const report = await buildReport(userId, true);
+  await prisma.reportSnapshot.upsert({
     where: { sessionId: session.id },
-  });
-  await prisma.reportSnapshot.create({
-    data: {
+    create: {
       sessionId: session.id,
+      payload: report as never,
+    },
+    update: {
       payload: report as never,
     },
   });
@@ -564,51 +627,123 @@ export async function finalizeSession(userId: string) {
   return { ready: true as const, readiness };
 }
 
-export async function buildReport(userId: string) {
+export type AssessmentReport = {
+  assessmentId: string;
+  generatedAt: string;
+  participant: {
+    fullName: string;
+    email: string | null;
+    targetInstitution: string | null;
+    targetProgram: string | null;
+    city: string | null;
+    code: string | null;
+  };
+  overall: {
+    readiness: number;
+    category: string;
+    interpretation: string;
+  } | null;
+  modules: {
+    code: string;
+    name: string;
+    isSensitive: boolean;
+    normalized: number;
+    raw: number;
+    category: string;
+    interpretation: string;
+    dimensions: {
+      code: string;
+      name: string;
+      normalized: number;
+      status: string;
+    }[];
+    recommendations: {
+      moduleId: string | null;
+      category: string | null;
+      title: string;
+      body: string;
+      priority: number;
+    }[];
+  }[];
+  strengths: {
+    moduleName: string;
+    moduleCode: string;
+    code: string;
+    name: string;
+    normalized: number;
+    status: string;
+  }[];
+  developmentAreas: {
+    moduleName: string;
+    moduleCode: string;
+    code: string;
+    name: string;
+    normalized: number;
+    status: string;
+  }[];
+  supportContacts: {
+    label: string;
+    description: string;
+    phone: string | null;
+    url: string | null;
+  }[];
+};
+
+export async function buildReport(userId: string, forceFresh = false): Promise<AssessmentReport> {
   const session = await requireOwnSession(userId);
-  const profile = await ensureProfile(userId);
 
-  const overall = await prisma.overallResult.findFirst({
-    where: { sessionId: session.id },
-  });
+  if (!forceFresh) {
+    const snapshot = await prisma.reportSnapshot.findUnique({
+      where: { sessionId: session.id },
+    });
+    if (snapshot?.payload) {
+      return snapshot.payload as unknown as AssessmentReport;
+    }
+  }
 
-  const modules = await prisma.assessmentModule.findMany({
-    where: { versionId: session.versionId },
-    orderBy: { sequence: "asc" },
-    select: {
-      id: true,
-      code: true,
-      name: true,
-      description: true,
-      sequence: true,
-      isSensitive: true,
-    },
-  });
+  const [profile, overall, modules, results, dimResults, contacts] = await Promise.all([
+    ensureProfile(userId),
+    prisma.overallResult.findFirst({
+      where: { sessionId: session.id },
+    }),
+    prisma.assessmentModule.findMany({
+      where: { versionId: session.versionId },
+      orderBy: { sequence: "asc" },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        description: true,
+        sequence: true,
+        isSensitive: true,
+      },
+    }),
+    prisma.assessmentResult.findMany({
+      where: { sessionId: session.id },
+    }),
+    prisma.dimensionResult.findMany({
+      where: { sessionId: session.id },
+    }),
+    prisma.supportContact.findMany({
+      where: { active: true },
+      orderBy: { sequence: "asc" },
+      select: { label: true, description: true, phone: true, url: true },
+    }),
+  ]);
 
-  const results = await prisma.assessmentResult.findMany({
-    where: { sessionId: session.id },
-  });
-
-  const dimResults = await prisma.dimensionResult.findMany({
-    where: { sessionId: session.id },
-  });
-
-  const dims = await prisma.assessmentDimension.findMany({
-    orderBy: { sequence: "asc" },
-    select: { id: true, moduleId: true, code: true, name: true, sequence: true },
-  });
-
-  const recommendations = await prisma.recommendation.findMany({
-    where: { active: true },
-    orderBy: { priority: "asc" },
-    select: { moduleId: true, category: true, title: true, body: true, priority: true },
-  });
-
-  const contacts = await prisma.supportContact.findMany({
-    where: { active: true },
-    orderBy: { sequence: "asc" },
-    select: { label: true, description: true, phone: true, url: true },
-  });
+  const moduleIds = modules.map((m) => m.id);
+  const [dims, recommendations] = await Promise.all([
+    prisma.assessmentDimension.findMany({
+      where: { moduleId: { in: moduleIds } },
+      orderBy: { sequence: "asc" },
+      select: { id: true, moduleId: true, code: true, name: true, sequence: true },
+    }),
+    prisma.recommendation.findMany({
+      where: { active: true, moduleId: { in: moduleIds } },
+      orderBy: { priority: "asc" },
+      select: { moduleId: true, category: true, title: true, body: true, priority: true },
+    }),
+  ]);
 
   const moduleReports = modules.map((m) => {
     const r = results.find((x) => x.moduleId === m.id);
@@ -643,7 +778,7 @@ export async function buildReport(userId: string) {
     m.dimensions.map((d) => ({ ...d, moduleName: m.name, moduleCode: m.code })),
   );
 
-  return {
+  const reportPayload = {
     assessmentId: session.id,
     generatedAt: new Date().toISOString(),
     participant: {
@@ -666,6 +801,20 @@ export async function buildReport(userId: string) {
     developmentAreas: [...allDims].sort((a, b) => a.normalized - b.normalized).slice(0, 3),
     supportContacts: contacts.length > 0 ? contacts : [],
   };
+
+  if (overall) {
+    try {
+      await prisma.reportSnapshot.upsert({
+        where: { sessionId: session.id },
+        create: { sessionId: session.id, payload: reportPayload as never },
+        update: { payload: reportPayload as never },
+      });
+    } catch {
+      // ignore concurrent snapshot update
+    }
+  }
+
+  return reportPayload as AssessmentReport;
 }
 
 export async function loadModuleResult(userId: string, moduleCode: string) {
@@ -676,21 +825,21 @@ export async function loadModuleResult(userId: string, moduleCode: string) {
   });
   if (!mod) throw new Error("Modul tidak ditemukan.");
 
-  const result = await prisma.assessmentResult.findFirst({
-    where: { sessionId: session.id, moduleId: mod.id },
-    select: { normalizedScore: true, rawScore: true, category: true, interpretation: true },
-  });
-
-  const dims = await prisma.assessmentDimension.findMany({
-    where: { moduleId: mod.id },
-    orderBy: { sequence: "asc" },
-    select: { id: true, code: true, name: true, sequence: true },
-  });
-
-  const dimResults = await prisma.dimensionResult.findMany({
-    where: { sessionId: session.id, moduleId: mod.id },
-    select: { dimensionId: true, normalizedScore: true, status: true },
-  });
+  const [result, dims, dimResults] = await Promise.all([
+    prisma.assessmentResult.findFirst({
+      where: { sessionId: session.id, moduleId: mod.id },
+      select: { normalizedScore: true, rawScore: true, category: true, interpretation: true },
+    }),
+    prisma.assessmentDimension.findMany({
+      where: { moduleId: mod.id },
+      orderBy: { sequence: "asc" },
+      select: { id: true, code: true, name: true, sequence: true },
+    }),
+    prisma.dimensionResult.findMany({
+      where: { sessionId: session.id, moduleId: mod.id },
+      select: { dimensionId: true, normalizedScore: true, status: true },
+    }),
+  ]);
 
   return {
     module: {

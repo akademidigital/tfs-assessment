@@ -55,6 +55,7 @@ function AssessmentPage() {
 
   const storageKey = participantId ? `tfs_answers_${participantId}_${moduleCode}` : null;
   const dirtyRef = useRef(false);
+  const isSavingRef = useRef(false);
   const answersRef = useRef(answers);
   answersRef.current = answers;
   const isSubmittingRef = useRef(isSubmitting);
@@ -83,23 +84,31 @@ function AssessmentPage() {
   // 2. Periodic background batch sync (every 6 seconds if answers changed)
   useEffect(() => {
     if (!participantId || !data) return;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       if (
         dirtyRef.current &&
         !isSubmittingRef.current &&
+        !isSavingRef.current &&
         Object.keys(answersRef.current).length > 0
       ) {
+        isSavingRef.current = true;
         dirtyRef.current = false;
-        void saveBatch({
-          data: {
-            participantId,
-            moduleCode,
-            answers: answersRef.current,
-            markCompleted: false,
-          },
-        }).catch(() => {
+        try {
+          await saveBatch({
+            data: {
+              participantId,
+              moduleCode,
+              answers: answersRef.current,
+              markCompleted: false,
+            },
+          });
+          setSaveState("saved");
+        } catch {
           dirtyRef.current = true;
-        });
+          setSaveState("error");
+        } finally {
+          isSavingRef.current = false;
+        }
       }
     }, 6000);
     return () => clearInterval(interval);
@@ -115,6 +124,14 @@ function AssessmentPage() {
     setIsSubmitting(true);
     isSubmittingRef.current = true;
     setSaveState("saving");
+
+    // Wait briefly if an autosave is currently in flight to prevent concurrency clash
+    let attempts = 0;
+    while (isSavingRef.current && attempts < 15) {
+      await new Promise((r) => setTimeout(r, 100));
+      attempts += 1;
+    }
+
     try {
       await saveBatch({
         data: {
@@ -182,7 +199,29 @@ function AssessmentPage() {
       <AppHeader subtitle={data?.module.name ?? moduleCode} />
       <main className="mx-auto max-w-2xl px-4 py-6">
         <div className="flex items-center justify-between gap-3">
-          <Button asChild variant="ghost" size="sm">
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              if (
+                dirtyRef.current &&
+                participantId &&
+                !isSubmittingRef.current &&
+                Object.keys(answersRef.current).length > 0
+              ) {
+                dirtyRef.current = false;
+                void saveBatch({
+                  data: {
+                    participantId,
+                    moduleCode,
+                    answers: answersRef.current,
+                    markCompleted: false,
+                  },
+                });
+              }
+            }}
+          >
             <Link to="/sub-tests">
               <ArrowLeft className="mr-2 size-4" /> Daftar sub-tes
             </Link>

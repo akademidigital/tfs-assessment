@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useState } from "react";
 import { useParticipantId } from "@/hooks/use-participant";
 import { Download, TrendingDown, TrendingUp } from "lucide-react";
 import { getReport } from "@/lib/assessment.functions";
-import { downloadReportPdf } from "@/lib/report-pdf";
 import { AppHeader } from "@/components/app-header";
 import { SupportContacts } from "@/components/support-contacts";
 import { LoadingScreen } from "@/components/loading-screen";
@@ -44,8 +44,7 @@ function Report() {
     queryKey: ["report", participantId],
     queryFn: () => fetchReport({ data: { participantId: participantId! } }),
     enabled: Boolean(participantId),
-    refetchOnMount: "always",
-    staleTime: 0,
+    staleTime: 5 * 60 * 1000,
   });
 
   if (isPending) {
@@ -111,8 +110,18 @@ function Report() {
   ]
     .filter(Boolean)
     .join(" · ");
-  const download = () => {
-    void downloadReportPdf(data as never);
+  const [downloading, setDownloading] = useState(false);
+  const download = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const { downloadReportPdf } = await import("@/lib/report-pdf");
+      await downloadReportPdf(data as never);
+    } catch (err) {
+      console.error("Gagal membuat PDF:", err);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -131,8 +140,13 @@ function Report() {
               {meta ? ` · ${meta}` : ""}
             </p>
           </div>
-          <Button onClick={download} className="bg-primary text-primary-foreground print:hidden">
-            <Download className="mr-2 size-4" /> Download PDF
+          <Button
+            onClick={download}
+            disabled={downloading}
+            className="bg-primary text-primary-foreground print:hidden"
+          >
+            <Download className="mr-2 size-4" />
+            {downloading ? "Menyiapkan PDF..." : "Download PDF"}
           </Button>
         </div>
 

@@ -35,8 +35,7 @@ function ModuleResult() {
     queryKey: ["module-result", moduleCode, participantId],
     queryFn: () => fetch({ data: { moduleCode, participantId: participantId! } }),
     enabled: Boolean(participantId),
-    refetchOnMount: "always",
-    staleTime: 0,
+    staleTime: 2 * 60 * 1000,
   });
 
   return (

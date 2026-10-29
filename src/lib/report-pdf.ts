@@ -1,4 +1,3 @@
-import { jsPDF } from "jspdf";
 import platformLogo from "@/assets/tfs-platform-logo.png";
 import brandLogo from "@/assets/akademi-taruna-landscape-white.png";
 
@@ -68,7 +67,8 @@ const toneTint = (v: number): RGB =>
 const toneLabel = (v: number) => (v >= 75 ? "Kuat" : v >= 50 ? "Berkembang" : "Perlu Penguatan");
 
 export async function downloadReportPdf(data: ReportPdfData) {
-  const [platformImg, brandImg] = await Promise.all([
+  const [{ jsPDF }, platformImg, brandImg] = await Promise.all([
+    import("jspdf"),
     loadImage(platformLogo),
     loadImage(brandLogo),
   ]);

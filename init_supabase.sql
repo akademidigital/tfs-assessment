@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS profiles_whatsapp_idx ON public.profiles(whatsapp);
+CREATE INDEX IF NOT EXISTS profiles_birth_date_idx ON public.profiles(birth_date);
 
 -- User Roles
 CREATE TABLE IF NOT EXISTS public.user_roles (
@@ -121,6 +122,7 @@ CREATE TABLE IF NOT EXISTS public.interpretation_bands (
   interpretation TEXT NOT NULL DEFAULT '',
   sequence INTEGER NOT NULL DEFAULT 1
 );
+CREATE INDEX IF NOT EXISTS interpretation_bands_module_scope_idx ON public.interpretation_bands(module_id, scope);
 
 -- Recommendations
 CREATE TABLE IF NOT EXISTS public.recommendations (
@@ -132,6 +134,7 @@ CREATE TABLE IF NOT EXISTS public.recommendations (
   priority INTEGER NOT NULL DEFAULT 1,
   active BOOLEAN NOT NULL DEFAULT true
 );
+CREATE INDEX IF NOT EXISTS recommendations_module_active_idx ON public.recommendations(module_id, active);
 
 -- Support Contacts
 CREATE TABLE IF NOT EXISTS public.support_contacts (
@@ -154,6 +157,7 @@ CREATE TABLE IF NOT EXISTS public.assessment_sessions (
   started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   completed_at TIMESTAMPTZ
 );
+CREATE INDEX IF NOT EXISTS assessment_sessions_user_id_idx ON public.assessment_sessions(user_id);
 
 -- Module Progress
 CREATE TABLE IF NOT EXISTS public.module_progress (
@@ -181,6 +185,7 @@ CREATE TABLE IF NOT EXISTS public.assessment_answers (
   CONSTRAINT assessment_answers_session_id_question_id_key UNIQUE (session_id, question_id)
 );
 CREATE INDEX IF NOT EXISTS assessment_answers_session_idx ON public.assessment_answers(session_id);
+CREATE INDEX IF NOT EXISTS assessment_answers_session_module_idx ON public.assessment_answers(session_id, module_id);
 
 -- Dimension Results
 CREATE TABLE IF NOT EXISTS public.dimension_results (
@@ -192,6 +197,7 @@ CREATE TABLE IF NOT EXISTS public.dimension_results (
   normalized_score NUMERIC(6,2) NOT NULL,
   status TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS dimension_results_session_module_idx ON public.dimension_results(session_id, module_id);
 
 -- Assessment Results
 CREATE TABLE IF NOT EXISTS public.assessment_results (
@@ -205,6 +211,7 @@ CREATE TABLE IF NOT EXISTS public.assessment_results (
   strongest_dimension_id UUID,
   weakest_dimension_id UUID
 );
+CREATE INDEX IF NOT EXISTS assessment_results_session_module_idx ON public.assessment_results(session_id, module_id);
 
 -- Overall Results
 CREATE TABLE IF NOT EXISTS public.overall_results (
@@ -214,6 +221,7 @@ CREATE TABLE IF NOT EXISTS public.overall_results (
   category TEXT NOT NULL,
   interpretation TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS overall_results_session_id_idx ON public.overall_results(session_id);
 
 -- Report Snapshots
 CREATE TABLE IF NOT EXISTS public.report_snapshots (

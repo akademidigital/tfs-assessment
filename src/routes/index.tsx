@@ -3,6 +3,9 @@ import { ArrowRight, BarChart3, Clock, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import logoAsset from "@/assets/tfs-platform-logo.png";
 import brandLogo from "@/assets/powered-by-akademi-taruna.png";
+import akpolImg from "@/assets/taruna-akpol.jpg";
+import akmilImg from "@/assets/akmil.jpg";
+import kedinasanImg from "@/assets/kedinasan.jpg";
 
 const TITLE = "Taruna Future Scanner — Asesmen Kesiapan Calon Taruna";
 const DESCRIPTION =
@@ -22,17 +25,17 @@ export const Route = createFileRoute("/")({
 
 const paths = [
   {
-    img: "https://akademitaruna.com/wp-content/uploads/2025/02/Alex-AKPOL.jpg",
+    img: akpolImg,
     label: "Taruna AKPOL",
     note: "Akademi Kepolisian",
   },
   {
-    img: "https://akademitaruna.com/wp-content/uploads/2025/02/ALFARIZI-MAULANA-BAEHAKI-AKMIL.jpg",
+    img: akmilImg,
     label: "Taruna AKMIL",
     note: "Akademi Militer",
   },
   {
-    img: "https://akademitaruna.com/wp-content/uploads/2025/02/Muhammad-Daffa-Dharmalaksana-KEDINASAN.jpg",
+    img: kedinasanImg,
     label: "Sekolah Kedinasan",
     note: "STAN, IPDN, PKN, dll.",
   },

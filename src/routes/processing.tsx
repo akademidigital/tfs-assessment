@@ -37,7 +37,7 @@ function Processing() {
   const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => setStep((s) => Math.min(s + 1, STEPS.length)), 900);
+    const timer = setInterval(() => setStep((s) => Math.min(s + 1, STEPS.length)), 250);
     return () => clearInterval(timer);
   }, []);
 
@@ -48,11 +48,17 @@ function Processing() {
       const started = Date.now();
       try {
         const res = await run({ data: { participantId } });
-        const wait = Math.max(0, 3800 - (Date.now() - started));
-        await new Promise((r) => setTimeout(r, wait));
+        const wait = Math.max(0, 600 - (Date.now() - started));
+        if (wait > 0) {
+          await new Promise((r) => setTimeout(r, wait));
+        }
         if (cancelled) return;
         if (res.ready) {
-          router.navigate({ to: "/report" });
+          setStep(STEPS.length);
+          await new Promise((r) => setTimeout(r, 200));
+          if (!cancelled) {
+            router.navigate({ to: "/report" });
+          }
         } else {
           setMessage("Masih ada sub-tes yang belum selesai. Silakan lengkapi terlebih dahulu.");
         }

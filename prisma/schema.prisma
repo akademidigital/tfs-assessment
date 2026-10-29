@@ -41,6 +41,7 @@ model Profile {
   sessions AssessmentSession[]
 
   @@index([whatsapp], map: "profiles_whatsapp_idx")
+  @@index([birthDate], map: "profiles_birth_date_idx")
   @@map("profiles")
 }
 
@@ -107,6 +108,7 @@ model AssessmentDimension {
   questions        AssessmentQuestion[]
   dimensionResults DimensionResult[]
 
+  @@index([moduleId], map: "assessment_dimensions_module_id_idx")
   @@map("assessment_dimensions")
 }
 
@@ -142,6 +144,7 @@ model InterpretationBand {
 
   module  AssessmentModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
+  @@index([moduleId, scope], map: "interpretation_bands_module_scope_idx")
   @@map("interpretation_bands")
 }
 
@@ -156,6 +159,7 @@ model Recommendation {
 
   module AssessmentModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
+  @@index([moduleId, active], map: "recommendations_module_active_idx")
   @@map("recommendations")
 }
 
@@ -189,6 +193,7 @@ model AssessmentSession {
   overallResults    OverallResult[]
   reportSnapshot    ReportSnapshot?
 
+  @@index([userId], map: "assessment_sessions_user_id_idx")
   @@map("assessment_sessions")
 }
 
@@ -223,6 +228,7 @@ model AssessmentAnswer {
   question AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, questionId])
+  @@index([sessionId, moduleId], map: "assessment_answers_session_module_idx")
   @@map("assessment_answers")
 }
 
@@ -239,6 +245,7 @@ model DimensionResult {
   module    AssessmentModule    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   dimension AssessmentDimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
 
+  @@index([sessionId, moduleId], map: "dimension_results_session_module_idx")
   @@map("dimension_results")
 }
 
@@ -256,6 +263,7 @@ model AssessmentResult {
   session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   module  AssessmentModule  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
 
+  @@index([sessionId, moduleId], map: "assessment_results_session_module_idx")
   @@map("assessment_results")
 }
 
@@ -268,6 +276,7 @@ model OverallResult {
 
   session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  @@index([sessionId], map: "overall_results_session_id_idx")
   @@map("overall_results")
 }
 
