@@ -41,9 +41,11 @@ function Report() {
   const participantId = useParticipantId();
   const fetchReport = useServerFn(getReport);
   const { data, isPending, error } = useQuery({
-    queryKey: ["report"],
+    queryKey: ["report", participantId],
     queryFn: () => fetchReport({ data: { participantId: participantId! } }),
     enabled: Boolean(participantId),
+    refetchOnMount: "always",
+    staleTime: 0,
   });
 
   if (isPending) {

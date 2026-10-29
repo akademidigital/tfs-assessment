@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
@@ -36,6 +36,7 @@ type SaveState = "idle" | "saving" | "saved" | "error";
 function AssessmentPage() {
   const { moduleCode } = Route.useParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const participantId = useParticipantId();
   const fetchModule = useServerFn(getModule);
   const saveBatch = useServerFn(submitBatchAnswers);
@@ -130,6 +131,10 @@ function AssessmentPage() {
           // ignore
         }
       }
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+        queryClient.invalidateQueries({ queryKey: ["module-result"] }),
+      ]);
       router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
     } catch (err) {
       console.error("Gagal mengirim hasil sub-tes:", err);
@@ -189,7 +194,7 @@ function AssessmentPage() {
 
         <Progress value={pct} className="mt-4" />
 
-        {saveState === "error" && (
+        {saveState === "error" && !isSubmitting && (
           <div className="mt-3 flex h-5 items-center gap-2 text-xs text-destructive">
             <span>Gagal menyimpan.</span>
             <button
@@ -206,6 +211,11 @@ function AssessmentPage() {
             label="Menyimpan dan menghitung skor..."
             hint="Sedang merangkum hasil sub-tes Anda."
           />
+        ) : isPending ? (
+          <LoadingScreen
+            label="Memuat pertanyaan..."
+            hint="Menyiapkan sub-tes dan jawaban tersimpan."
+          />
         ) : error ? (
           <div className="mt-6 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
             <p>Gagal memuat sub-tes.</p>
@@ -213,13 +223,6 @@ function AssessmentPage() {
               Muat ulang
             </Button>
           </div>
-        ) : null}
-
-        {isPending ? (
-          <LoadingScreen
-            label="Memuat pertanyaan..."
-            hint="Menyiapkan sub-tes dan jawaban tersimpan."
-          />
         ) : needsDisclaimer ? (
           <Card className="mt-6 border-warning/50 bg-warning/10">
             <CardContent className="pt-6">

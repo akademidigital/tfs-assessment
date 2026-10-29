@@ -4,7 +4,13 @@ import { routeTree } from "./routeTree.gen";
 import { FullPageLoader } from "./components/loading-screen";
 
 export const getRouter = () => {
-  const queryClient = new QueryClient();
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 0,
+      },
+    },
+  });
 
   const router = createRouter({
     routeTree,
