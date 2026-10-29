@@ -1,0 +1,284 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Profile {
+  id                 String    @id @default(uuid()) @db.Uuid
+  code               String?   @unique
+  fullName           String    @default("") @map("full_name")
+  email              String?
+  phone              String?
+  age                Int?
+  educationLevel     String?   @map("education_level")
+  targetInstitution  String?   @map("target_institution")
+  targetProgram      String?   @map("target_program")
+  city               String?
+  guardianContact    String?   @map("guardian_contact")
+  gender             String?
+  classLevel         String?   @map("class_level")
+  schoolName         String?   @map("school_name")
+  major              String?
+  whatsapp           String?
+  birthPlace         String?   @map("birth_place")
+  birthDate          DateTime? @map("birth_date") @db.Date
+  heightCm           Int?      @map("height_cm")
+  weightKg           Int?      @map("weight_kg")
+  guardianName       String?   @map("guardian_name")
+  guardianWhatsapp   String?   @map("guardian_whatsapp")
+  careerTarget       String?   @map("career_target")
+  referralSource     String?   @map("referral_source")
+  consentVersion     String?   @map("consent_version")
+  consentAt          DateTime? @map("consent_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  sessions AssessmentSession[]
+
+  @@index([whatsapp], map: "profiles_whatsapp_idx")
+  @@map("profiles")
+}
+
+model UserRole {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  role      String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, role])
+  @@map("user_roles")
+}
+
+model ContentVersion {
+  id          String    @id @default(uuid()) @db.Uuid
+  version     String    @unique
+  status      String    @default("draft")
+  notes       String?
+  publishedAt DateTime? @map("published_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  modules             AssessmentModule[]
+  sessions            AssessmentSession[]
+  interpretationBands InterpretationBand[]
+
+  @@map("content_versions")
+}
+
+model AssessmentModule {
+  id               String   @id @default(uuid()) @db.Uuid
+  versionId        String   @map("version_id") @db.Uuid
+  code             String
+  name             String
+  description      String   @default("")
+  sequence         Int
+  estimatedMinutes Int      @default(8) @map("estimated_minutes")
+  isSensitive      Boolean  @default(false) @map("is_sensitive")
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  version             ContentVersion        @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  dimensions          AssessmentDimension[]
+  questions           AssessmentQuestion[]
+  moduleProgress      ModuleProgress[]
+  assessmentAnswers   AssessmentAnswer[]
+  dimensionResults    DimensionResult[]
+  assessmentResults   AssessmentResult[]
+  interpretationBands InterpretationBand[]
+  recommendations     Recommendation[]
+
+  @@unique([versionId, code])
+  @@unique([versionId, sequence])
+  @@map("assessment_modules")
+}
+
+model AssessmentDimension {
+  id          String @id @default(uuid()) @db.Uuid
+  moduleId    String @map("module_id") @db.Uuid
+  code        String
+  name        String
+  description String @default("")
+  sequence    Int
+
+  module           AssessmentModule    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  questions        AssessmentQuestion[]
+  dimensionResults DimensionResult[]
+
+  @@map("assessment_dimensions")
+}
+
+model AssessmentQuestion {
+  id          String   @id @default(uuid()) @db.Uuid
+  moduleId    String   @map("module_id") @db.Uuid
+  dimensionId String   @map("dimension_id") @db.Uuid
+  itemCode    String   @map("item_code")
+  prompt      String
+  direction   String   @default("F")
+  sequence    Int
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  module    AssessmentModule    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  dimension AssessmentDimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+  answers   AssessmentAnswer[]
+
+  @@map("assessment_questions")
+}
+
+model InterpretationBand {
+  id             String  @id @default(uuid()) @db.Uuid
+  versionId      String  @map("version_id") @db.Uuid
+  moduleId       String? @map("module_id") @db.Uuid
+  scope          String  // 'module' | 'overall'
+  minScore       Decimal @map("min_score") @db.Decimal(6, 2)
+  maxScore       Decimal @map("max_score") @db.Decimal(6, 2)
+  category       String
+  interpretation String  @default("")
+  sequence       Int
+
+  version ContentVersion    @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  module  AssessmentModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@map("interpretation_bands")
+}
+
+model Recommendation {
+  id       String  @id @default(uuid()) @db.Uuid
+  moduleId String? @map("module_id") @db.Uuid
+  category String?
+  title    String
+  body     String  @default("")
+  priority Int     @default(1)
+  active   Boolean @default(true)
+
+  module AssessmentModule? @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@map("recommendations")
+}
+
+model SupportContact {
+  id          String  @id @default(uuid()) @db.Uuid
+  label       String
+  description String  @default("")
+  phone       String?
+  url         String?
+  active      Boolean @default(true)
+  sequence    Int     @default(1)
+
+  @@map("support_contacts")
+}
+
+model AssessmentSession {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid
+  versionId         String    @map("version_id") @db.Uuid
+  status            String    @default("in_progress")
+  scoringCalculated Boolean   @default(false) @map("scoring_calculated")
+  startedAt         DateTime  @default(now()) @map("started_at")
+  completedAt       DateTime? @map("completed_at")
+
+  profile           Profile               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version           ContentVersion        @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  progress          ModuleProgress[]
+  answers           AssessmentAnswer[]
+  dimensionResults  DimensionResult[]
+  assessmentResults AssessmentResult[]
+  overallResults    OverallResult[]
+  reportSnapshot    ReportSnapshot?
+
+  @@map("assessment_sessions")
+}
+
+model ModuleProgress {
+  id            String    @id @default(uuid()) @db.Uuid
+  sessionId     String    @map("session_id") @db.Uuid
+  moduleId      String    @map("module_id") @db.Uuid
+  status        String    @default("not_started")
+  answeredCount Int       @default(0) @map("answered_count")
+  totalItems    Int       @default(0) @map("total_items")
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+
+  session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  module  AssessmentModule  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, moduleId])
+  @@map("module_progress")
+}
+
+model AssessmentAnswer {
+  id          String   @id @default(uuid()) @db.Uuid
+  sessionId   String   @map("session_id") @db.Uuid
+  moduleId    String   @map("module_id") @db.Uuid
+  questionId  String   @map("question_id") @db.Uuid
+  answerValue Int      @map("answer_value")
+  scoredValue Int      @map("scored_value")
+  answeredAt  DateTime @default(now()) @map("answered_at")
+
+  session  AssessmentSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  module   AssessmentModule   @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  question AssessmentQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@map("assessment_answers")
+}
+
+model DimensionResult {
+  id              String  @id @default(uuid()) @db.Uuid
+  sessionId       String  @map("session_id") @db.Uuid
+  moduleId        String  @map("module_id") @db.Uuid
+  dimensionId     String  @map("dimension_id") @db.Uuid
+  rawScore        Decimal @map("raw_score") @db.Decimal(6, 2)
+  normalizedScore Decimal @map("normalized_score") @db.Decimal(6, 2)
+  status          String
+
+  session   AssessmentSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  module    AssessmentModule    @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  dimension AssessmentDimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@map("dimension_results")
+}
+
+model AssessmentResult {
+  id                   String  @id @default(uuid()) @db.Uuid
+  sessionId            String  @map("session_id") @db.Uuid
+  moduleId             String  @map("module_id") @db.Uuid
+  rawScore             Decimal @map("raw_score") @db.Decimal(6, 2)
+  normalizedScore      Decimal @map("normalized_score") @db.Decimal(6, 2)
+  category             String
+  interpretation       String  @default("")
+  strongestDimensionId String? @map("strongest_dimension_id") @db.Uuid
+  weakestDimensionId   String? @map("weakest_dimension_id") @db.Uuid
+
+  session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  module  AssessmentModule  @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_results")
+}
+
+model OverallResult {
+  id             String  @id @default(uuid()) @db.Uuid
+  sessionId      String  @map("session_id") @db.Uuid
+  readinessScore Decimal @map("readiness_score") @db.Decimal(6, 2)
+  category       String
+  interpretation String  @default("")
+
+  session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("overall_results")
+}
+
+model ReportSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  sessionId String   @unique @map("session_id") @db.Uuid
+  payload   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session AssessmentSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("report_snapshots")
+}

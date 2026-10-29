@@ -1,0 +1,1 @@
+DELETE FROM public.profiles WHERE code IN ('TFS-CF7V','TFS-NN8G');
