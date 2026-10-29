@@ -17,8 +17,8 @@ export function SupportContacts({
       <CardHeader>
         <CardTitle className="text-base">Kontak Dukungan Profesional</CardTitle>
         <p className="text-sm text-muted-foreground">
-          Konsultasikan hasil asesmen Anda langsung dengan tim konsultan Akademi Prestasi melalui
-          WhatsApp cabang terdekat.
+          Konsultasikan hasil asesmen Anda langsung dengan tim konsultan Akademi Prestasi Pusat melalui
+          WhatsApp.
         </p>
       </CardHeader>
       <CardContent className="grid gap-4 md:grid-cols-2">

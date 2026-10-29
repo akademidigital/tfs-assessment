@@ -55,6 +55,7 @@ function AssessmentPage() {
 
   const storageKey = participantId ? `tfs_answers_${participantId}_${moduleCode}` : null;
   const dirtyRef = useRef(false);
+  const pendingAnswersRef = useRef<Record<string, number>>({});
   const isSavingRef = useRef(false);
   const answersRef = useRef(answers);
   answersRef.current = answers;
@@ -77,6 +78,10 @@ function AssessmentPage() {
       }
     }
     setAnswers(merged);
+    pendingAnswersRef.current = Object.fromEntries(
+      Object.entries(merged).filter(([questionId, value]) => data.answers[questionId] !== value),
+    );
+    dirtyRef.current = Object.keys(pendingAnswersRef.current).length > 0;
     const firstUnanswered = data.questions.findIndex((q) => !(q.id in merged));
     setIndex(firstUnanswered === -1 ? Math.max(data.questions.length - 1, 0) : firstUnanswered);
   }, [data, storageKey]);
@@ -89,21 +94,24 @@ function AssessmentPage() {
         dirtyRef.current &&
         !isSubmittingRef.current &&
         !isSavingRef.current &&
-        Object.keys(answersRef.current).length > 0
+        Object.keys(pendingAnswersRef.current).length > 0
       ) {
         isSavingRef.current = true;
+        const changedAnswers = pendingAnswersRef.current;
+        pendingAnswersRef.current = {};
         dirtyRef.current = false;
         try {
           await saveBatch({
             data: {
               participantId,
               moduleCode,
-              answers: answersRef.current,
+              answers: changedAnswers,
               markCompleted: false,
             },
           });
           setSaveState("saved");
         } catch {
+          pendingAnswersRef.current = { ...changedAnswers, ...pendingAnswersRef.current };
           dirtyRef.current = true;
           setSaveState("error");
         } finally {
@@ -148,6 +156,8 @@ function AssessmentPage() {
           // ignore
         }
       }
+      pendingAnswersRef.current = {};
+      dirtyRef.current = false;
 
       // Pre-seed query cache with calculated result so result page opens instantly with 0ms loading
       if (res.result) {
@@ -174,6 +184,7 @@ function AssessmentPage() {
 
     // 1. Instant optimistic state update (0ms latency)
     setAnswers(nextAnswers);
+    pendingAnswersRef.current = { ...pendingAnswersRef.current, [questionId]: value };
     dirtyRef.current = true;
 
     // 2. Instant offline backup to localStorage
@@ -214,18 +225,24 @@ function AssessmentPage() {
                 dirtyRef.current &&
                 participantId &&
                 !isSubmittingRef.current &&
-                Object.keys(answersRef.current).length > 0
+                Object.keys(pendingAnswersRef.current).length > 0
               ) {
                 dirtyRef.current = false;
+                const changedAnswers = pendingAnswersRef.current;
+                pendingAnswersRef.current = {};
                 void saveBatch({
                   data: {
                     participantId,
                     moduleCode,
-                    answers: answersRef.current,
+                    answers: changedAnswers,
                     markCompleted: false,
                   },
+                }).catch(() => {
+                  pendingAnswersRef.current = { ...changedAnswers, ...pendingAnswersRef.current };
+                  dirtyRef.current = true;
                 });
               }
+              void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
             }}
           >
             <Link to="/sub-tests">

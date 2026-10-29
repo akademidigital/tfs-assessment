@@ -1,12 +1,12 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ClipboardList } from "lucide-react";
 import platformLogo from "@/assets/tfs-platform-logo.png";
 import brandLogo from "@/assets/powered-by-akademi-taruna.png";
-import { registerParticipantFn, updateParticipantFn } from "@/lib/assessment.functions";
-import { getParticipantId, setParticipant } from "@/lib/participant";
+import { registerParticipantFn } from "@/lib/assessment.functions";
+import { clearParticipant, setParticipant } from "@/lib/participant";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -156,7 +156,10 @@ function SelectField({
 function Daftar() {
   const router = useRouter();
   const register = useServerFn(registerParticipantFn);
-  const update = useServerFn(updateParticipantFn);
+
+  useEffect(() => {
+    clearParticipant();
+  }, []);
 
   const [form, setForm] = useState<FormState>({
     full_name: "",
@@ -252,17 +255,12 @@ function Daftar() {
       consent: true,
     };
     try {
-      const existingId = getParticipantId();
-      if (existingId) {
-        await update({ data: { ...payload, participantId: existingId } });
-        toast.success("Data peserta diperbarui.");
-      } else {
-        const created = await register({ data: payload });
-        setParticipant(created.participantId, created.code);
-        toast.success(`Pendaftaran berhasil. Kode peserta Anda: ${created.code}`, {
-          duration: 8000,
-        });
-      }
+      clearParticipant();
+      const created = await register({ data: payload });
+      setParticipant(created.participantId, created.code);
+      toast.success(`Pendaftaran berhasil. Kode peserta Anda: ${created.code}`, {
+        duration: 8000,
+      });
       router.navigate({ to: "/sub-tests" });
     } catch (err) {
       const raw = err instanceof Error ? err.message : "";

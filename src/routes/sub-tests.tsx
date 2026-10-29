@@ -62,7 +62,8 @@ function SubTests() {
     queryKey: ["dashboard", participantId],
     queryFn: () => fetchDashboard({ data: { participantId: participantId! } }),
     enabled: Boolean(participantId),
-    staleTime: 30 * 1000,
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 
   useEffect(() => {

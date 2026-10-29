@@ -7,12 +7,13 @@ export type BranchContact = {
 
 export const SUPPORT_BRANCHES: BranchContact[] = [
   {
-    name: "Akademi Prestasi Learning Center",
+    name: "Akademi Prestasi Learning Center (Pusat)",
     address:
       "Jl. Taman Villa Baru Jl. Villa Raya No.A21, Pekayon Jaya, Kec. Bekasi Selatan, Kota Bekasi, Jawa Barat 17148",
     whatsapp: "0813-2083-4632",
     email: "bekasi@akademiprestasi.com",
   },
+  /*
   {
     name: "Akademi Prestasi Cabang Bandung",
     address:
@@ -76,6 +77,7 @@ export const SUPPORT_BRANCHES: BranchContact[] = [
       "Tepat di seberang FTL, Jl. Dr. Setiabudi No.138A, RT.001/RW.002, Pamulang Tim., Kec. Pamulang, Kota Tangerang Selatan, Banten 15417",
     whatsapp: "0813-8976-3583",
   },
+  */
 ];
 
 export function toWaNumber(phone: string) {

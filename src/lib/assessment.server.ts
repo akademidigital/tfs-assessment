@@ -1,4 +1,5 @@
 // Server-only assessment logic using Prisma ORM.
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
   matchBandByRaw,
@@ -74,18 +75,17 @@ export async function ensureSession(userId: string) {
 
   const missing = modules.filter((m) => !progress.some((p) => p.moduleId === m.id));
   if (missing.length > 0) {
-    const counts = await Promise.all(
-      missing.map(async (m) => {
-        const count = await prisma.assessmentQuestion.count({
-          where: { moduleId: m.id, active: true },
-        });
-        return {
-          moduleId: m.id,
-          sessionId: session!.id,
-          totalItems: count,
-        };
-      }),
-    );
+    const questionCounts = await prisma.assessmentQuestion.groupBy({
+      by: ["moduleId"],
+      where: { moduleId: { in: missing.map((m) => m.id) }, active: true },
+      _count: { _all: true },
+    });
+    const countByModule = new Map(questionCounts.map((row) => [row.moduleId, row._count._all]));
+    const counts = missing.map((module) => ({
+      moduleId: module.id,
+      sessionId: session!.id,
+      totalItems: countByModule.get(module.id) ?? 0,
+    }));
     await prisma.moduleProgress.createMany({ data: counts });
     counts.forEach((c) => {
       progress.push({
@@ -475,30 +475,41 @@ export async function persistBatchAnswers(
   const entries = Object.entries(answers).filter(([qid]) => questionMap.has(qid));
 
   if (entries.length > 0) {
+    const records = entries.map(([questionId, answerValue]) => {
+      if (!Number.isInteger(answerValue) || answerValue < 1 || answerValue > 5) {
+        throw new Error("Nilai jawaban tidak valid.");
+      }
+      const direction = questionMap.get(questionId) as "F" | "UF";
+      return {
+        questionId,
+        answerValue,
+        scoredValue: scoreAnswer(direction, answerValue),
+      };
+    });
+
     await prisma.$transaction(async (tx) => {
-      const qids = entries.map(([qid]) => qid);
-      await tx.assessmentAnswer.deleteMany({
-        where: {
-          sessionId: session.id,
-          questionId: { in: qids },
-        },
-      });
-
-      const records = entries.map(([qid, val]) => {
-        const dir = (questionMap.get(qid) as "F" | "UF") || "F";
-        const scored = scoreAnswer(dir, val);
-        return {
-          sessionId: session.id,
-          moduleId: mod.id,
-          questionId: qid,
-          answerValue: val,
-          scoredValue: scored,
-        };
-      });
-
-      await tx.assessmentAnswer.createMany({
-        data: records,
-      });
+      // One bulk upsert avoids a delete + recreate cycle and preserves answers
+      // when overlapping autosave requests arrive close together.
+      await tx.$executeRaw(Prisma.sql`
+        INSERT INTO public.assessment_answers
+          (session_id, module_id, question_id, answer_value, scored_value, answered_at)
+        VALUES ${Prisma.join(
+          records.map(
+            (record) => Prisma.sql`(
+              ${session.id}::uuid,
+              ${mod.id}::uuid,
+              ${record.questionId}::uuid,
+              ${record.answerValue},
+              ${record.scoredValue},
+              CURRENT_TIMESTAMP
+            )`,
+          ),
+        )}
+        ON CONFLICT (session_id, question_id) DO UPDATE SET
+          answer_value = EXCLUDED.answer_value,
+          scored_value = EXCLUDED.scored_value,
+          answered_at = EXCLUDED.answered_at
+      `);
 
       const answeredCount = await tx.assessmentAnswer.count({
         where: { sessionId: session.id, moduleId: mod.id },
@@ -506,17 +517,16 @@ export async function persistBatchAnswers(
 
       const existingProgress = await tx.moduleProgress.findUnique({
         where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
-        select: { status: true, answeredCount: true, completedAt: true },
+        select: { completedAt: true },
       });
 
       const totalItems = questions.length;
-      const wasCompleted = existingProgress?.status === "completed";
-      const isComplete = markCompleted || wasCompleted || (totalItems > 0 && answeredCount >= totalItems);
+      const isComplete = markCompleted || (totalItems > 0 && answeredCount >= totalItems);
 
       await tx.moduleProgress.update({
         where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
         data: {
-          answeredCount: Math.max(answeredCount, existingProgress?.answeredCount ?? 0),
+          answeredCount,
           totalItems,
           status: isComplete ? "completed" : "in_progress",
           startedAt: new Date(),

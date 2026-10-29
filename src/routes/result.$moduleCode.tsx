@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
+import { useEffect } from "react";
 import { useParticipantId } from "@/hooks/use-participant";
 import { ArrowLeft, BarChart3 } from "lucide-react";
 import { getModuleResult } from "@/lib/assessment.functions";
@@ -38,19 +39,21 @@ function ModuleResult() {
     staleTime: 2 * 60 * 1000,
   });
 
+  useEffect(() => {
+    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+  }, [queryClient]);
+
   return (
     <div className="min-h-screen bg-background">
       <AppHeader subtitle={data?.module.name ?? moduleCode} />
       <main className="mx-auto max-w-2xl px-4 py-6">
-        <Button
-          asChild
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-          }}
-        >
-          <Link to="/sub-tests">
+        <Button asChild variant="ghost" size="sm">
+          <Link
+            to="/sub-tests"
+            onClick={() => {
+              void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+            }}
+          >
             <ArrowLeft className="mr-2 size-4" /> Kembali ke modul
           </Link>
         </Button>
