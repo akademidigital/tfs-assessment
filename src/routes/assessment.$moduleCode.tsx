@@ -133,7 +133,7 @@ function AssessmentPage() {
     }
 
     try {
-      await saveBatch({
+      const res = await saveBatch({
         data: {
           participantId,
           moduleCode,
@@ -148,10 +148,16 @@ function AssessmentPage() {
           // ignore
         }
       }
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
-        queryClient.invalidateQueries({ queryKey: ["module-result"] }),
-      ]);
+
+      // Pre-seed query cache with calculated result so result page opens instantly with 0ms loading
+      if (res.result) {
+        queryClient.setQueryData(
+          ["module-result", moduleCode, participantId],
+          res.result,
+        );
+      }
+
+      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
     } catch (err) {
       console.error("Gagal mengirim hasil sub-tes:", err);

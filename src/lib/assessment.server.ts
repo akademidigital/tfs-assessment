@@ -344,7 +344,35 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
   return { saved: true, answeredCount, totalItems, moduleCompleted };
 }
 
+export type ModuleResultPayload = {
+  module: {
+    code: string;
+    name: string;
+    description: string;
+    isSensitive: boolean;
+  };
+  result: {
+    normalized: number;
+    raw: number;
+    category: string;
+    interpretation: string;
+  } | null;
+  dimensions: {
+    code: string;
+    name: string;
+    normalized: number;
+    status: string;
+  }[];
+};
+
 interface ModuleBlueprint {
+  module: {
+    id: string;
+    code: string;
+    name: string;
+    description: string;
+    isSensitive: boolean;
+  };
   questions: { id: string; dimensionId: string; direction: string }[];
   dims: { id: string; code: string; name: string; sequence: number }[];
   bands: Band[];
@@ -358,7 +386,11 @@ async function getModuleBlueprint(moduleId: string): Promise<ModuleBlueprint> {
     return cached.data;
   }
 
-  const [dims, questions, bands] = await Promise.all([
+  const [mod, dims, questions, bands] = await Promise.all([
+    prisma.assessmentModule.findUnique({
+      where: { id: moduleId },
+      select: { id: true, code: true, name: true, description: true, isSensitive: true },
+    }),
     prisma.assessmentDimension.findMany({
       where: { moduleId },
       orderBy: { sequence: "asc" },
@@ -381,6 +413,8 @@ async function getModuleBlueprint(moduleId: string): Promise<ModuleBlueprint> {
     }),
   ]);
 
+  if (!mod) throw new Error("Modul tidak ditemukan.");
+
   const parsedBands: Band[] = bands.map((b) => ({
     category: b.category,
     min_score: Number(b.minScore),
@@ -389,7 +423,7 @@ async function getModuleBlueprint(moduleId: string): Promise<ModuleBlueprint> {
     sequence: b.sequence,
   }));
 
-  const data = { dims, questions, bands: parsedBands };
+  const data = { module: mod, dims, questions, bands: parsedBands };
   moduleBlueprintCache.set(moduleId, { data, expiresAt: Date.now() + 15 * 60 * 1000 });
   return data;
 }
@@ -492,15 +526,16 @@ export async function persistBatchAnswers(
     });
   }
 
+  let moduleResult: ModuleResultPayload | null = null;
   const isCompleted = markCompleted || entries.length >= questions.length;
   if (isCompleted) {
-    await scoreModule(session.id, mod.id);
+    moduleResult = await scoreModule(session.id, mod.id);
   }
 
-  return { saved: true, count: entries.length, completed: isCompleted };
+  return { saved: true, count: entries.length, completed: isCompleted, result: moduleResult };
 }
 
-async function scoreModule(sessionId: string, moduleId: string) {
+async function scoreModule(sessionId: string, moduleId: string): Promise<ModuleResultPayload> {
   const [blueprint, answers] = await Promise.all([
     getModuleBlueprint(moduleId),
     prisma.assessmentAnswer.findMany({
@@ -509,7 +544,7 @@ async function scoreModule(sessionId: string, moduleId: string) {
     }),
   ]);
 
-  const { dims, questions, bands: parsedBands } = blueprint;
+  const { module: modMeta, dims, questions, bands: parsedBands } = blueprint;
   const scoreByQuestion = new Map(answers.map((a) => [a.questionId, a.scoredValue]));
 
   const dimRows = dims.map((d) => {
@@ -561,6 +596,30 @@ async function scoreModule(sessionId: string, moduleId: string) {
       },
     }),
   ]);
+
+  return {
+    module: {
+      code: modMeta.code,
+      name: modMeta.name,
+      description: modMeta.description,
+      isSensitive: modMeta.isSensitive,
+    },
+    result: {
+      normalized: Math.round(Number(moduleNorm)),
+      raw: Number(totalRaw),
+      category: band?.category ?? "Tidak Terkategori",
+      interpretation: band?.interpretation ?? "",
+    },
+    dimensions: dims.map((d) => {
+      const dr = dimRows.find((x) => x.dimensionId === d.id);
+      return {
+        code: d.code,
+        name: d.name,
+        normalized: dr ? Math.round(Number(dr.normalizedScore)) : 0,
+        status: dr?.status ?? "-",
+      };
+    }),
+  };
 }
 
 export async function finalizeSession(userId: string) {
@@ -817,29 +876,27 @@ export async function buildReport(userId: string, forceFresh = false): Promise<A
   return reportPayload as AssessmentReport;
 }
 
-export async function loadModuleResult(userId: string, moduleCode: string) {
-  const session = await requireOwnSession(userId);
+export async function loadModuleResult(userId: string, moduleCode: string): Promise<ModuleResultPayload> {
+  const session = await getCachedSession(userId);
   const mod = await prisma.assessmentModule.findFirst({
     where: { versionId: session.versionId, code: moduleCode },
     select: { id: true, code: true, name: true, description: true, isSensitive: true },
   });
   if (!mod) throw new Error("Modul tidak ditemukan.");
 
-  const [result, dims, dimResults] = await Promise.all([
+  const [blueprint, result, dimResults] = await Promise.all([
+    getModuleBlueprint(mod.id),
     prisma.assessmentResult.findFirst({
       where: { sessionId: session.id, moduleId: mod.id },
       select: { normalizedScore: true, rawScore: true, category: true, interpretation: true },
-    }),
-    prisma.assessmentDimension.findMany({
-      where: { moduleId: mod.id },
-      orderBy: { sequence: "asc" },
-      select: { id: true, code: true, name: true, sequence: true },
     }),
     prisma.dimensionResult.findMany({
       where: { sessionId: session.id, moduleId: mod.id },
       select: { dimensionId: true, normalizedScore: true, status: true },
     }),
   ]);
+
+  const { dims } = blueprint;
 
   return {
     module: {
