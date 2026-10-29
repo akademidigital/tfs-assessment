@@ -1,9 +1,9 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, CloudUpload, Loader2, RefreshCw } from "lucide-react";
-import { getModule, submitAnswer } from "@/lib/assessment.functions";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, ArrowLeft, RefreshCw } from "lucide-react";
+import { getModule, submitBatchAnswers } from "@/lib/assessment.functions";
 import { useParticipantId } from "@/hooks/use-participant";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,7 @@ function AssessmentPage() {
   const router = useRouter();
   const participantId = useParticipantId();
   const fetchModule = useServerFn(getModule);
-  const save = useServerFn(submitAnswer);
+  const saveBatch = useServerFn(submitBatchAnswers);
 
   const { data, isPending, error, refetch } = useQuery({
     queryKey: ["module", moduleCode, participantId],
@@ -49,66 +49,125 @@ function AssessmentPage() {
   const [answers, setAnswers] = useState<Record<string, number>>({});
   const [index, setIndex] = useState(0);
   const [saveState, setSaveState] = useState<SaveState>("idle");
-  const [pending, setPending] = useState<{ questionId: string; value: number } | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
 
+  const storageKey = participantId ? `tfs_answers_${participantId}_${moduleCode}` : null;
+  const dirtyRef = useRef(false);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
+  const isSubmittingRef = useRef(isSubmitting);
+  isSubmittingRef.current = isSubmitting;
+
+  // 1. Initial Load: Merge server answers with local storage cache
   useEffect(() => {
     if (!data) return;
-    setAnswers(data.answers);
-    const firstUnanswered = data.questions.findIndex((q) => !(q.id in data.answers));
+    let merged = { ...data.answers };
+    if (typeof window !== "undefined" && storageKey) {
+      try {
+        const local = localStorage.getItem(storageKey);
+        if (local) {
+          const parsed = JSON.parse(local) as Record<string, number>;
+          merged = { ...merged, ...parsed };
+        }
+      } catch {
+        // ignore parse error
+      }
+    }
+    setAnswers(merged);
+    const firstUnanswered = data.questions.findIndex((q) => !(q.id in merged));
     setIndex(firstUnanswered === -1 ? Math.max(data.questions.length - 1, 0) : firstUnanswered);
-  }, [data]);
+  }, [data, storageKey]);
+
+  // 2. Periodic background batch sync (every 6 seconds if answers changed)
+  useEffect(() => {
+    if (!participantId || !data) return;
+    const interval = setInterval(() => {
+      if (
+        dirtyRef.current &&
+        !isSubmittingRef.current &&
+        Object.keys(answersRef.current).length > 0
+      ) {
+        dirtyRef.current = false;
+        void saveBatch({
+          data: {
+            participantId,
+            moduleCode,
+            answers: answersRef.current,
+            markCompleted: false,
+          },
+        }).catch(() => {
+          dirtyRef.current = true;
+        });
+      }
+    }, 6000);
+    return () => clearInterval(interval);
+  }, [participantId, moduleCode, data, saveBatch]);
 
   const total = data?.questions.length ?? 0;
   const answeredCount = useMemo(() => Object.keys(answers).length, [answers]);
   const question = data?.questions[index];
   const needsDisclaimer = Boolean(data?.module.isSensitive) && !acknowledged && answeredCount === 0;
 
-  async function commit(questionId: string, value: number, isLastItem = false) {
-    if (!participantId) return;
+  async function finalizeModule(allAnswers: Record<string, number>) {
+    if (!participantId || isSubmitting) return;
+    setIsSubmitting(true);
+    isSubmittingRef.current = true;
     setSaveState("saving");
-    setPending({ questionId, value });
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const res = await save({ data: { questionId, value, participantId } });
-        setSaveState("saved");
-        setPending(null);
-        if (res.moduleCompleted || isLastItem) {
-          router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
-          return;
+    try {
+      await saveBatch({
+        data: {
+          participantId,
+          moduleCode,
+          answers: allAnswers,
+          markCompleted: true,
+        },
+      });
+      if (typeof window !== "undefined" && storageKey) {
+        try {
+          localStorage.removeItem(storageKey);
+        } catch {
+          // ignore
         }
-        return;
-      } catch (err) {
-        lastError = err;
-        await new Promise((r) => setTimeout(r, 300 * 2 ** attempt));
       }
+      router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
+    } catch (err) {
+      console.error("Gagal mengirim hasil sub-tes:", err);
+      setIsSubmitting(false);
+      isSubmittingRef.current = false;
+      setSaveState("error");
     }
-    console.error(lastError);
-    setSaveState("error");
   }
 
   function choose(value: number) {
-    if (!question) return;
+    if (!question || isSubmitting) return;
     const questionId = question.id;
     const nextAnswers = { ...answers, [questionId]: value };
 
-    // 1. Instant optimistic state update (0ms UI latency)
+    // 1. Instant optimistic state update (0ms latency)
     setAnswers(nextAnswers);
+    dirtyRef.current = true;
 
-    // 2. Instant jump to next unanswered question
+    // 2. Instant offline backup to localStorage
+    if (typeof window !== "undefined" && storageKey) {
+      try {
+        localStorage.setItem(storageKey, JSON.stringify(nextAnswers));
+      } catch {
+        // storage disabled
+      }
+    }
+
+    // 3. Instant jump to next unanswered question
     const questions = data?.questions ?? [];
     const forward = questions.findIndex((q, i) => i > index && !(q.id in nextAnswers));
     const target = forward !== -1 ? forward : questions.findIndex((q) => !(q.id in nextAnswers));
 
-    const isLastItem = target === -1 && Object.keys(nextAnswers).length >= total;
-
     if (target !== -1) {
       setIndex(target);
+    } else if (Object.keys(nextAnswers).length >= total && total > 0) {
+      // All questions answered: Finalize and score synchronously!
+      void finalizeModule(nextAnswers);
     }
-
-    // 3. Save to server in background
-    void commit(questionId, value, isLastItem);
   }
 
   const pct = total > 0 ? Math.round((answeredCount / total) * 100) : 0;
@@ -130,29 +189,24 @@ function AssessmentPage() {
 
         <Progress value={pct} className="mt-4" />
 
-        <div className="mt-3 flex h-5 items-center gap-2 text-xs">
-          {saveState === "saving" ? (
-            <span className="flex items-center gap-1 text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" /> Menyimpan…
-            </span>
-          ) : saveState === "saved" ? (
-            <span className="flex items-center gap-1 text-success">
-              <CloudUpload className="size-3" /> Tersimpan
-            </span>
-          ) : saveState === "error" ? (
-            <span className="flex items-center gap-2 text-destructive">
-              Gagal menyimpan.
-              <button
-                className="inline-flex items-center gap-1 underline"
-                onClick={() => pending && commit(pending.questionId, pending.value, false)}
-              >
-                <RefreshCw className="size-3" /> Coba lagi
-              </button>
-            </span>
-          ) : null}
-        </div>
+        {saveState === "error" && (
+          <div className="mt-3 flex h-5 items-center gap-2 text-xs text-destructive">
+            <span>Gagal menyimpan.</span>
+            <button
+              className="inline-flex items-center gap-1 underline"
+              onClick={() => void finalizeModule(answers)}
+            >
+              <RefreshCw className="size-3" /> Coba lagi
+            </button>
+          </div>
+        )}
 
-        {error ? (
+        {isSubmitting ? (
+          <LoadingScreen
+            label="Menyimpan dan menghitung skor..."
+            hint="Sedang merangkum hasil sub-tes Anda."
+          />
+        ) : error ? (
           <div className="mt-6 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm">
             <p>Gagal memuat sub-tes.</p>
             <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
@@ -236,7 +290,7 @@ function AssessmentPage() {
               >
                 Pernyataan sebelumnya
               </button>
-              <span>Layar berpindah otomatis setelah jawaban tersimpan.</span>
+              <span>Layar berpindah otomatis ke butir berikutnya.</span>
             </div>
 
             {total > 0 && answeredCount < total && index === total - 1 ? (

@@ -82,6 +82,24 @@ export async function ensureSession(userId: string) {
     await prisma.moduleProgress.createMany({ data: counts });
   }
 
+  // Self-heal totalItems if session was created before question bank was seeded
+  const needsSync = progress.filter((p) => p.totalItems === 0);
+  if (needsSync.length > 0) {
+    await Promise.all(
+      needsSync.map(async (p) => {
+        const count = await prisma.assessmentQuestion.count({
+          where: { moduleId: p.moduleId, active: true },
+        });
+        if (count > 0) {
+          await prisma.moduleProgress.update({
+            where: { id: p.id },
+            data: { totalItems: count },
+          });
+        }
+      }),
+    );
+  }
+
   return { session, versionId, modules };
 }
 
@@ -277,7 +295,12 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
     }),
   ]);
 
-  const totalItems = progress?.totalItems ?? 0;
+  let totalItems = progress?.totalItems ?? 0;
+  if (totalItems === 0) {
+    totalItems = await prisma.assessmentQuestion.count({
+      where: { moduleId: q.moduleId, active: true },
+    });
+  }
   const moduleCompleted = totalItems > 0 && answeredCount >= totalItems;
 
   await prisma.moduleProgress.update({
@@ -300,6 +323,82 @@ export async function persistAnswer(userId: string, questionId: string, answerVa
   }
 
   return { saved: true, answeredCount, totalItems, moduleCompleted };
+}
+
+export async function persistBatchAnswers(
+  userId: string,
+  moduleCode: string,
+  answers: Record<string, number>,
+  markCompleted = false,
+) {
+  const session = await getCachedSession(userId);
+
+  const mod = await prisma.assessmentModule.findFirst({
+    where: { versionId: session.versionId, code: moduleCode },
+    select: { id: true, code: true },
+  });
+  if (!mod) throw new Error("Modul tidak ditemukan.");
+
+  const questions = await prisma.assessmentQuestion.findMany({
+    where: { moduleId: mod.id, active: true },
+    select: { id: true, direction: true },
+  });
+
+  const questionMap = new Map(questions.map((q) => [q.id, q.direction]));
+  const entries = Object.entries(answers).filter(([qid]) => questionMap.has(qid));
+
+  if (entries.length > 0) {
+    await prisma.$transaction(async (tx) => {
+      const qids = entries.map(([qid]) => qid);
+      await tx.assessmentAnswer.deleteMany({
+        where: {
+          sessionId: session.id,
+          questionId: { in: qids },
+        },
+      });
+
+      const records = entries.map(([qid, val]) => {
+        const dir = (questionMap.get(qid) as "F" | "UF") || "F";
+        const scored = scoreAnswer(dir, val);
+        return {
+          sessionId: session.id,
+          moduleId: mod.id,
+          questionId: qid,
+          answerValue: val,
+          scoredValue: scored,
+        };
+      });
+
+      await tx.assessmentAnswer.createMany({
+        data: records,
+      });
+
+      const answeredCount = await tx.assessmentAnswer.count({
+        where: { sessionId: session.id, moduleId: mod.id },
+      });
+
+      const totalItems = questions.length;
+      const isComplete = markCompleted || (totalItems > 0 && answeredCount >= totalItems);
+
+      await tx.moduleProgress.update({
+        where: { sessionId_moduleId: { sessionId: session.id, moduleId: mod.id } },
+        data: {
+          answeredCount,
+          totalItems,
+          status: isComplete ? "completed" : "in_progress",
+          startedAt: new Date(),
+          completedAt: isComplete ? new Date() : null,
+        },
+      });
+    });
+  }
+
+  const isCompleted = markCompleted || entries.length >= questions.length;
+  if (isCompleted) {
+    await scoreModule(session.id, mod.id);
+  }
+
+  return { saved: true, count: entries.length, completed: isCompleted };
 }
 
 async function scoreModule(sessionId: string, moduleId: string) {

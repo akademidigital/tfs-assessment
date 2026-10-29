@@ -143,6 +143,26 @@ export const submitAnswer = createServerFn({ method: "POST" })
     return persistAnswer(data.participantId, data.questionId, data.value);
   });
 
+export const submitBatchAnswers = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) =>
+    participant
+      .extend({
+        moduleCode: z.string().min(2).max(10),
+        answers: z.record(z.string(), z.number().int().min(1).max(5)),
+        markCompleted: z.boolean().optional(),
+      })
+      .parse(data),
+  )
+  .handler(async ({ data }) => {
+    const { persistBatchAnswers } = await import("./assessment.server");
+    return persistBatchAnswers(
+      data.participantId,
+      data.moduleCode,
+      data.answers,
+      data.markCompleted ?? false,
+    );
+  });
+
 export const finalize = createServerFn({ method: "POST" })
   .inputValidator((data: unknown) => participant.parse(data))
   .handler(async ({ data }) => {
