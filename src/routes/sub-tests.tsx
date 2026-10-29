@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect } from "react";
 import {
@@ -16,7 +16,7 @@ import {
   Target,
   Users,
 } from "lucide-react";
-import { getDashboard, getModuleResult } from "@/lib/assessment.functions";
+import { getDashboard } from "@/lib/assessment.functions";
 import { useParticipantId } from "@/hooks/use-participant";
 import { AppHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
@@ -54,24 +54,15 @@ const ICONS: Record<string, typeof Brain> = {
 
 function SubTests() {
   const router = useRouter();
-  const queryClient = useQueryClient();
   const participantId = useParticipantId();
   const fetchDashboard = useServerFn(getDashboard);
-  const fetchModuleResult = useServerFn(getModuleResult);
-  const { data, isPending, error, refetch } = useQuery({
+  const { data, isPending, error } = useQuery({
     queryKey: ["dashboard", participantId],
     queryFn: () => fetchDashboard({ data: { participantId: participantId! } }),
     enabled: Boolean(participantId),
-    staleTime: 0,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
+    staleTime: 15 * 1000,
+    refetchOnWindowFocus: false,
   });
-
-  useEffect(() => {
-    if (participantId) {
-      void refetch();
-    }
-  }, [participantId, refetch]);
 
   useEffect(() => {
     if (data && !data.profile.consentAt) router.navigate({ to: "/daftar" });
@@ -161,18 +152,6 @@ function SubTests() {
                             asChild
                             variant="outline"
                             className="w-full"
-                            onMouseEnter={() => {
-                              if (participantId) {
-                                void queryClient.prefetchQuery({
-                                  queryKey: ["module-result", m.code, participantId],
-                                  queryFn: () =>
-                                    fetchModuleResult({
-                                      data: { moduleCode: m.code, participantId },
-                                    }),
-                                  staleTime: 2 * 60 * 1000,
-                                });
-                              }
-                            }}
                           >
                             <Link to="/result/$moduleCode" params={{ moduleCode: m.code }}>
                               <BarChart3 className="mr-2 size-4" /> Lihat Hasil

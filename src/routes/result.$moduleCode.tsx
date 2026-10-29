@@ -1,7 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect } from "react";
 import { useParticipantId } from "@/hooks/use-participant";
 import { ArrowLeft, BarChart3 } from "lucide-react";
 import { getModuleResult } from "@/lib/assessment.functions";
@@ -30,7 +29,6 @@ export const Route = createFileRoute("/result/$moduleCode")({
 function ModuleResult() {
   const { moduleCode } = Route.useParams();
   const participantId = useParticipantId();
-  const queryClient = useQueryClient();
   const fetch = useServerFn(getModuleResult);
   const { data, isPending, error } = useQuery({
     queryKey: ["module-result", moduleCode, participantId],
@@ -39,22 +37,12 @@ function ModuleResult() {
     staleTime: 2 * 60 * 1000,
   });
 
-  useEffect(() => {
-    void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-  }, [queryClient]);
-
   return (
     <div className="min-h-screen bg-background">
       <AppHeader subtitle={data?.module.name ?? moduleCode} />
       <main className="mx-auto max-w-2xl px-4 py-6">
         <Button asChild variant="ghost" size="sm">
-          <Link
-            to="/sub-tests"
-            onClick={() => {
-              void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-              void queryClient.refetchQueries({ queryKey: ["dashboard"] });
-            }}
-          >
+          <Link to="/sub-tests">
             <ArrowLeft className="mr-2 size-4" /> Kembali ke modul
           </Link>
         </Button>

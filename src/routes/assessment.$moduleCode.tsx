@@ -57,8 +57,7 @@ function AssessmentPage() {
   const dirtyRef = useRef(false);
   const pendingAnswersRef = useRef<Record<string, number>>({});
   const isSavingRef = useRef(false);
-  const answersRef = useRef(answers);
-  answersRef.current = answers;
+  const saveInFlightRef = useRef<Promise<unknown> | null>(null);
   const isSubmittingRef = useRef(isSubmitting);
   isSubmittingRef.current = isSubmitting;
 
@@ -86,9 +85,12 @@ function AssessmentPage() {
     setIndex(firstUnanswered === -1 ? Math.max(data.questions.length - 1, 0) : firstUnanswered);
   }, [data, storageKey]);
 
-  // 2. Periodic background batch sync (every 6 seconds if answers changed)
+  // 2. Periodic background batch sync (about every 6–8 seconds when changed)
   useEffect(() => {
     if (!participantId || !data) return;
+    // Give clients slightly different autosave phases to avoid a periodic
+    // request spike when a whole class starts the assessment together.
+    const syncIntervalMs = 6000 + Math.floor(Math.random() * 2000);
     const interval = setInterval(async () => {
       if (
         dirtyRef.current &&
@@ -101,7 +103,7 @@ function AssessmentPage() {
         pendingAnswersRef.current = {};
         dirtyRef.current = false;
         try {
-          await saveBatch({
+          const savePromise = saveBatch({
             data: {
               participantId,
               moduleCode,
@@ -109,6 +111,8 @@ function AssessmentPage() {
               markCompleted: false,
             },
           });
+          saveInFlightRef.current = savePromise;
+          await savePromise;
           setSaveState("saved");
         } catch {
           pendingAnswersRef.current = { ...changedAnswers, ...pendingAnswersRef.current };
@@ -116,9 +120,10 @@ function AssessmentPage() {
           setSaveState("error");
         } finally {
           isSavingRef.current = false;
+          saveInFlightRef.current = null;
         }
       }
-    }, 6000);
+    }, syncIntervalMs);
     return () => clearInterval(interval);
   }, [participantId, moduleCode, data, saveBatch]);
 
@@ -127,25 +132,27 @@ function AssessmentPage() {
   const question = data?.questions[index];
   const needsDisclaimer = Boolean(data?.module.isSensitive) && !acknowledged && answeredCount === 0;
 
-  async function finalizeModule(allAnswers: Record<string, number>) {
+  async function finalizeModule() {
     if (!participantId || isSubmitting) return;
     setIsSubmitting(true);
     isSubmittingRef.current = true;
     setSaveState("saving");
 
-    // Wait briefly if an autosave is currently in flight to prevent concurrency clash
-    let attempts = 0;
-    while (isSavingRef.current && attempts < 15) {
-      await new Promise((r) => setTimeout(r, 100));
-      attempts += 1;
+    // Let an in-flight autosave finish before submitting the remaining delta.
+    const inFlightSave = saveInFlightRef.current;
+    if (inFlightSave) {
+      await inFlightSave.catch(() => undefined);
     }
+    const finalAnswers = pendingAnswersRef.current;
+    pendingAnswersRef.current = {};
+    dirtyRef.current = false;
 
     try {
       const res = await saveBatch({
         data: {
           participantId,
           moduleCode,
-          answers: allAnswers,
+          answers: finalAnswers,
           markCompleted: true,
         },
       });
@@ -191,9 +198,10 @@ function AssessmentPage() {
         };
       });
 
-      void queryClient.invalidateQueries({ queryKey: ["dashboard"] });
       router.navigate({ to: "/result/$moduleCode", params: { moduleCode } });
     } catch (err) {
+      pendingAnswersRef.current = { ...finalAnswers, ...pendingAnswersRef.current };
+      dirtyRef.current = Object.keys(pendingAnswersRef.current).length > 0;
       console.error("Gagal mengirim hasil sub-tes:", err);
       setIsSubmitting(false);
       isSubmittingRef.current = false;
@@ -229,7 +237,7 @@ function AssessmentPage() {
       setIndex(target);
     } else if (Object.keys(nextAnswers).length >= total && total > 0) {
       // All questions answered: Finalize and score synchronously!
-      void finalizeModule(nextAnswers);
+      void finalizeModule();
     }
   }
 
