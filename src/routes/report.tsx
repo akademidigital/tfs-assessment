@@ -219,20 +219,6 @@ function Report() {
     <div className="min-h-screen bg-background">
       <AppHeader subtitle="Laporan Kesiapan" code={studentCode} isAdmin={isAdminView} />
       <main className="mx-auto max-w-5xl px-4 py-8">
-        {isAdminView ? (
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary shadow-sm animate-fade-in print:hidden">
-            <div className="flex items-center gap-2">
-              <span className="flex size-2 rounded-full bg-primary animate-pulse" />
-              <span className="font-semibold">
-                Mode Pratinjau Administrator — Menampilkan Laporan: {participantInfo.fullName || "Peserta"}
-              </span>
-            </div>
-            <Button asChild size="sm" variant="default" className="h-8 text-xs font-semibold">
-              <Link to="/admin">← Kembali ke Panel Admin</Link>
-            </Button>
-          </div>
-        ) : null}
-
         {/* Header dokumen */}
         <div className="flex flex-wrap items-start justify-between gap-4 animate-fade-in">
           <div>
