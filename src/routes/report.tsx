@@ -23,7 +23,17 @@ const TITLE = "Laporan Kesiapan — Taruna Future Scanner";
 const DESCRIPTION =
   "Laporan kesiapan calon taruna: indeks kesiapan, profil sembilan sub-tes, kekuatan, area pengembangan, dan rekomendasi.";
 
+interface ReportSearchParams {
+  participantId?: string | undefined;
+}
+
 export const Route = createFileRoute("/report")({
+  validateSearch: (search: Record<string, unknown>): ReportSearchParams => ({
+    participantId:
+      typeof search["participantId"] === "string" && search["participantId"].trim()
+        ? search["participantId"].trim()
+        : undefined,
+  }),
   head: () => ({
     meta: [
       { title: TITLE },
@@ -35,17 +45,57 @@ export const Route = createFileRoute("/report")({
     ],
   }),
   component: Report,
+  errorComponent: ReportErrorComponent,
 });
 
-function Report() {
+function ReportErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
+  console.error("Gagal memuat halaman laporan:", error);
   const location = useLocation();
   const searchParticipantId =
     (location.search as { participantId?: string })?.participantId ||
     (typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("participantId") || undefined
       : undefined);
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">
+          Laporan Belum Dapat Ditampilkan
+        </h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Terjadi kendala saat memproses data laporan. Pastikan seluruh sub-tes siswa telah diselesaikan dan dihitung.
+        </p>
+        <div className="mt-6 flex flex-wrap justify-center gap-2">
+          <Button onClick={() => reset()} variant="default">
+            Coba Lagi
+          </Button>
+          {searchParticipantId ? (
+            <Button asChild variant="outline">
+              <Link to="/admin">Kembali ke Panel Admin</Link>
+            </Button>
+          ) : (
+            <Button asChild variant="outline">
+              <Link to="/sub-tests">Kembali ke Sub-Tes</Link>
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Report() {
+  const search = Route.useSearch();
+  const searchParticipantId =
+    search.participantId ||
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("participantId") || undefined
+      : undefined);
   const storedParticipantId = useParticipantId(!searchParticipantId);
   const participantId = searchParticipantId || storedParticipantId;
+  const isAdminView = Boolean(searchParticipantId);
+
   const fetchReport = useServerFn(getReport);
   const { data, isPending, error } = useQuery({
     queryKey: ["report", participantId],
@@ -54,14 +104,30 @@ function Report() {
     staleTime: 5 * 60 * 1000,
   });
 
+  if (!participantId) {
+    return (
+      <div className="min-h-screen bg-background">
+        <AppHeader isAdmin={isAdminView} />
+        <main className="mx-auto max-w-5xl px-4 py-12 text-center">
+          <p className="text-sm text-destructive">ID Peserta tidak ditemukan.</p>
+          <Button asChild variant="outline" className="mt-4">
+            <Link to={isAdminView ? "/admin" : "/daftar"}>
+              {isAdminView ? "Kembali ke Panel Admin" : "Daftar Asesmen"}
+            </Link>
+          </Button>
+        </main>
+      </div>
+    );
+  }
+
   if (isPending) {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader />
+        <AppHeader isAdmin={isAdminView} />
         <main className="mx-auto max-w-5xl px-4 py-8">
           <LoadingScreen
-            label="Menyiapkan laporan Anda..."
-            hint="Mengambil skor dan rekomendasi."
+            label="Menyiapkan laporan..."
+            hint="Mengambil skor dan analisis rekomendasi."
           />
         </main>
       </div>
@@ -71,11 +137,15 @@ function Report() {
   if (error || !data) {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader />
+        <AppHeader isAdmin={isAdminView} />
         <main className="mx-auto max-w-5xl px-4 py-12 text-center">
-          <p className="text-sm text-destructive">Laporan belum tersedia.</p>
+          <p className="text-sm text-destructive">
+            {error instanceof Error ? error.message : "Laporan belum tersedia."}
+          </p>
           <Button asChild variant="outline" className="mt-4">
-            <Link to="/sub-tests">Kembali ke daftar sub-tes</Link>
+            <Link to={isAdminView ? "/admin" : "/sub-tests"}>
+              {isAdminView ? "Kembali ke Panel Admin" : "Kembali ke daftar sub-tes"}
+            </Link>
           </Button>
         </main>
       </div>
@@ -85,38 +155,51 @@ function Report() {
   if (!data.overall) {
     return (
       <div className="min-h-screen bg-background">
-        <AppHeader />
+        <AppHeader isAdmin={isAdminView} />
         <main className="mx-auto max-w-5xl px-4 py-12 text-center">
           <h1 className="text-xl font-semibold">Laporan belum dihitung</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Selesaikan seluruh sub-tes lalu proses hasil untuk melihat laporan.
+            {isAdminView
+              ? "Siswa ini belum menyelesaikan seluruh sub-tes atau skor akhir belum diproses."
+              : "Selesaikan seluruh sub-tes lalu proses hasil untuk melihat laporan."}
           </p>
           <Button asChild className="mt-5">
-            <Link to="/processing">Proses hasil sekarang</Link>
+            <Link to={isAdminView ? "/admin" : "/processing"}>
+              {isAdminView ? "Kembali ke Panel Admin" : "Proses hasil sekarang"}
+            </Link>
           </Button>
         </main>
       </div>
     );
   }
 
-  const modules = data.modules as ReportModule[];
-  const sortedModules = [...modules].sort((a, b) => b.normalized - a.normalized);
-  const topModule = sortedModules[0];
+  const participantInfo = data.participant ?? {};
+  const studentCode = (participantInfo as { code?: string | null }).code ?? null;
+  const modules = (data.modules ?? []) as ReportModule[];
+  const sortedModules = [...modules].sort((a, b) => (b.normalized ?? 0) - (a.normalized ?? 0));
+  const topModule = sortedModules[0] ?? null;
   const highlights = sortedModules.slice(0, 4);
-  const moduleRadar = modules.map((m) => ({ subject: m.code, value: m.normalized }));
-  const dimensionRadar = modules.map((m) => ({
-    subject: m.name.replace(/\s*(Index|Readiness|Screener)$/i, "").trim(),
-    value: m.dimensions.length
-      ? m.dimensions.reduce((sum, d) => sum + d.normalized, 0) / m.dimensions.length
-      : 0,
-  }));
+  const moduleRadar = modules.map((m) => ({ subject: m.code || "-", value: m.normalized ?? 0 }));
+  const dimensionRadar = modules.map((m) => {
+    const dims = m.dimensions ?? [];
+    const avg = dims.length
+      ? dims.reduce((sum, d) => sum + (d?.normalized ?? 0), 0) / dims.length
+      : (m.normalized ?? 0);
+    return {
+      subject: (m.name || m.code || "").replace(/\s*(Index|Readiness|Screener)$/i, "").trim() || m.code,
+      value: Math.round(avg),
+    };
+  });
   const meta = [
-    data.participant.targetInstitution,
-    data.participant.targetProgram,
-    data.participant.city,
+    participantInfo.targetInstitution,
+    participantInfo.targetProgram,
+    participantInfo.city,
   ]
     .filter(Boolean)
     .join(" · ");
+  const strengths = data.strengths ?? [];
+  const developmentAreas = data.developmentAreas ?? [];
+
   const [downloading, setDownloading] = useState(false);
   const download = async () => {
     if (downloading) return;
@@ -133,16 +216,19 @@ function Report() {
 
   return (
     <div className="min-h-screen bg-background">
-      <AppHeader subtitle="Laporan Kesiapan" />
+      <AppHeader subtitle="Laporan Kesiapan" code={studentCode} isAdmin={isAdminView} />
       <main className="mx-auto max-w-5xl px-4 py-8">
-        {searchParticipantId ? (
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary animate-fade-in print:hidden">
-            <span className="font-medium">
-              Mode Pratinjau Admin: Menampilkan laporan resmi siswa.
-            </span>
-            <Link to="/admin" className="font-semibold underline hover:opacity-85">
-              ← Kembali ke Panel Admin
-            </Link>
+        {isAdminView ? (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary shadow-sm animate-fade-in print:hidden">
+            <div className="flex items-center gap-2">
+              <span className="flex size-2 rounded-full bg-primary animate-pulse" />
+              <span className="font-semibold">
+                Mode Pratinjau Administrator — Menampilkan Laporan: {participantInfo.fullName || "Peserta"}
+              </span>
+            </div>
+            <Button asChild size="sm" variant="default" className="h-8 text-xs font-semibold">
+              <Link to="/admin">← Kembali ke Panel Admin</Link>
+            </Button>
           </div>
         ) : null}
 
@@ -154,7 +240,7 @@ function Report() {
               Laporan Kesiapan Calon Taruna
             </h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {data.participant.fullName || "Peserta"}
+              {participantInfo.fullName || "Peserta"}
               {meta ? ` · ${meta}` : ""}
             </p>
           </div>
@@ -176,7 +262,7 @@ function Report() {
                 Akademi Prestasi · Taruna Future Scanner
               </p>
               <p className="mt-1.5 font-display text-lg font-semibold">
-                {data.participant.fullName || "Peserta"}
+                {participantInfo.fullName || "Peserta"}
               </p>
               <p className="text-xs text-muted-foreground">
                 {meta || "Data peserta belum lengkap"}
@@ -186,11 +272,11 @@ function Report() {
               <p>
                 Kode Asesmen:{" "}
                 <span className="font-semibold text-foreground">
-                  {(data.participant as { code?: string | null }).code || "—"}
+                  {studentCode || "—"}
                 </span>
               </p>
               <p className="mt-1">
-                Dibuat {new Date(data.generatedAt).toLocaleDateString("id-ID")}
+                Dibuat {data.generatedAt ? new Date(data.generatedAt).toLocaleDateString("id-ID") : "—"}
               </p>
             </div>
           </CardContent>
@@ -219,14 +305,14 @@ function Report() {
                 Sub-tes terkuat
               </h2>
               <p className="mt-1.5 font-display text-xl font-semibold text-primary">
-                {topModule?.name}
+                {topModule?.name || "—"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {topModule ? `${topModule.code} · ${topModule.category}` : ""}
+                {topModule ? `${topModule.code} · ${topModule.category}` : "Belum dihitung"}
               </p>
               <div className="mt-4 space-y-3">
                 {highlights.map((m) => (
-                  <ScoreRow key={m.code} label={m.name} value={m.normalized} />
+                  <ScoreRow key={m.code} label={m.name} value={m.normalized ?? 0} />
                 ))}
               </div>
               {data.overall.interpretation ? (
@@ -261,14 +347,18 @@ function Report() {
               </h2>
             </CardHeader>
             <CardContent className="space-y-4">
-              {data.strengths.map((d) => (
-                <ScoreRow
-                  key={`${d.moduleCode}-${d.code}`}
-                  label={d.name}
-                  sub={d.moduleName}
-                  value={d.normalized}
-                />
-              ))}
+              {strengths.length > 0 ? (
+                strengths.map((d) => (
+                  <ScoreRow
+                    key={`${d.moduleCode}-${d.code}`}
+                    label={d.name}
+                    sub={d.moduleName}
+                    value={d.normalized ?? 0}
+                  />
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">Data kekuatan belum tersedia.</p>
+              )}
             </CardContent>
           </Card>
           <Card className="animate-fade-in border-warning/40 bg-warning/5">
@@ -278,14 +368,18 @@ function Report() {
               </h2>
             </CardHeader>
             <CardContent className="space-y-4">
-              {data.developmentAreas.map((d) => (
-                <ScoreRow
-                  key={`${d.moduleCode}-${d.code}`}
-                  label={d.name}
-                  sub={d.moduleName}
-                  value={d.normalized}
-                />
-              ))}
+              {developmentAreas.length > 0 ? (
+                developmentAreas.map((d) => (
+                  <ScoreRow
+                    key={`${d.moduleCode}-${d.code}`}
+                    label={d.name}
+                    sub={d.moduleName}
+                    value={d.normalized ?? 0}
+                  />
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">Data area pengembangan belum tersedia.</p>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -306,18 +400,18 @@ function Report() {
         </Card>
 
         <RecommendationGrid modules={modules} />
-        <ActionPlan areas={data.developmentAreas} />
+        <ActionPlan areas={developmentAreas} />
 
         <SupportContacts
-          participantName={data.participant.fullName}
-          code={(data.participant as { code?: string | null }).code ?? null}
+          participantName={participantInfo.fullName}
+          code={studentCode}
           readiness={data.overall.readiness}
         />
 
         <p className="mt-8 text-center text-xs leading-relaxed text-muted-foreground">
           Laporan ini bersifat rahasia dan digunakan untuk keperluan pembinaan. Hasil bukan
           diagnosis medis maupun keputusan seleksi resmi. ID Asesmen: {data.assessmentId} · Dibuat{" "}
-          {new Date(data.generatedAt).toLocaleString("id-ID")}
+          {data.generatedAt ? new Date(data.generatedAt).toLocaleString("id-ID") : "—"}
         </p>
       </main>
     </div>

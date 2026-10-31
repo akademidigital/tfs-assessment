@@ -23,7 +23,8 @@ export type ReportModule = {
 };
 
 export function ModuleCard({ module: m }: { module: ReportModule }) {
-  const tone = toneOf(m.normalized);
+  const tone = toneOf(m.normalized ?? 0);
+  const dimensions = m.dimensions ?? [];
   return (
     <div className={`animate-fade-in rounded-2xl border p-5 ${tone.soft}`}>
       <div className="flex items-start justify-between gap-3">
@@ -32,16 +33,16 @@ export function ModuleCard({ module: m }: { module: ReportModule }) {
           <p className="text-sm font-semibold leading-snug">{m.name}</p>
         </div>
         <Badge variant="outline" className={tone.ring}>
-          {m.category}
+          {m.category || "-"}
         </Badge>
       </div>
       <div className="mt-3 flex items-end gap-2">
         <span className={`font-display text-3xl font-semibold tabular-nums ${tone.text}`}>
-          {Math.round(m.normalized)}
+          {Math.round(m.normalized ?? 0)}
         </span>
         <span className="pb-1 text-xs text-muted-foreground">/ 100 · {tone.label}</span>
       </div>
-      <ScoreBar value={m.normalized} className="mt-2 h-1.5" />
+      <ScoreBar value={m.normalized ?? 0} className="mt-2 h-1.5" />
       {m.isSensitive ? (
         <p className="mt-3 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 p-2.5 text-[11px] leading-relaxed">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
@@ -51,18 +52,20 @@ export function ModuleCard({ module: m }: { module: ReportModule }) {
       {m.interpretation ? (
         <p className="mt-3 text-xs leading-relaxed text-muted-foreground">{m.interpretation}</p>
       ) : null}
-      <div className="mt-4 space-y-2.5 border-t border-border/60 pt-4">
-        {m.dimensions.map((d) => (
-          <ScoreRow key={d.code} label={d.name} value={d.normalized} />
-        ))}
-      </div>
+      {dimensions.length > 0 ? (
+        <div className="mt-4 space-y-2.5 border-t border-border/60 pt-4">
+          {dimensions.map((d) => (
+            <ScoreRow key={d.code} label={d.name} value={d.normalized ?? 0} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 export function RecommendationGrid({ modules }: { modules: ReportModule[] }) {
-  const items = modules.flatMap((m) =>
-    m.recommendations.map((r) => ({ ...r, moduleCode: m.code, moduleName: m.name })),
+  const items = (modules ?? []).flatMap((m) =>
+    (m.recommendations ?? []).map((r) => ({ ...r, moduleCode: m.code, moduleName: m.name })),
   );
   if (!items.length) return null;
   return (
@@ -96,27 +99,28 @@ export function RecommendationGrid({ modules }: { modules: ReportModule[] }) {
 }
 
 export function ActionPlan({ areas }: { areas: ReportDim[] }) {
-  if (!areas.length) return null;
+  const safeAreas = areas ?? [];
+  if (!safeAreas.length) return null;
   const phases = [
     {
       label: "30 Hari",
       title: "Perkuat fondasi",
       lead: "Fokus pada satu area terlemah.",
-      area: areas[0],
+      area: safeAreas[0],
       verbs: ["Pelajari materi dasar", "Latihan harian 20 menit", "Catat progres mingguan"],
     },
     {
       label: "60 Hari",
       title: "Latihan terukur",
       lead: "Tambah beban dan ukur hasilnya.",
-      area: areas[1] ?? areas[0],
+      area: safeAreas[1] ?? safeAreas[0],
       verbs: ["Simulasi terjadwal", "Evaluasi skor tiap 2 minggu", "Minta umpan balik mentor"],
     },
     {
       label: "90 Hari",
       title: "Siap uji",
       lead: "Konsolidasi menuju seleksi.",
-      area: areas[2] ?? areas[0],
+      area: safeAreas[2] ?? safeAreas[0],
       verbs: ["Simulasi penuh", "Perbaiki titik lemah sisa", "Kunci rutinitas harian"],
     },
   ];

@@ -285,7 +285,7 @@ export async function downloadReportPdf(data: ReportPdfData) {
   y = headerH + 26;
 
   // ---------- hero: gauge + strongest ----------
-  const sorted = [...data.modules].sort((a, b) => b.normalized - a.normalized);
+  const sorted = [...(data.modules || [])].sort((a, b) => b.normalized - a.normalized);
   if (data.overall) {
     const heroH = 168;
     const gaugeW = contentW * 0.42;
@@ -444,14 +444,17 @@ export async function downloadReportPdf(data: ReportPdfData) {
 
   // ---------- strengths / development ----------
   const dualList = (title: string, items: Dim[], accent: RGB, tint: RGB) => {
-    const h = 42 + items.length * 30;
-    return { title, items, accent, tint, h };
+    const safeItems = items || [];
+    const h = 42 + safeItems.length * 30;
+    return { title, items: safeItems, accent, tint, h };
   };
-  if (data.strengths.length || data.developmentAreas.length) {
+  const strengths = data.strengths || [];
+  const devAreas = data.developmentAreas || [];
+  if (strengths.length || devAreas.length) {
     const colW = (contentW - 14) / 2;
     const blocks = [
-      dualList("Tiga Kekuatan Utama", data.strengths, GREEN, [240, 250, 244]),
-      dualList("Tiga Area Pengembangan", data.developmentAreas, ORANGE, [254, 247, 236]),
+      dualList("Tiga Kekuatan Utama", strengths, GREEN, [240, 250, 244]),
+      dualList("Tiga Area Pengembangan", devAreas, ORANGE, [254, 247, 236]),
     ];
     const h = Math.max(...blocks.map((b) => b.h));
     ensure(h + 16);
@@ -476,7 +479,7 @@ export async function downloadReportPdf(data: ReportPdfData) {
   const moduleHeight = (m: Mod) => {
     let h = 70;
     if (m.interpretation) h += lines(m.interpretation, colW - 28, 7.5).length * 10 + 2;
-    h += m.dimensions.length * 20 + 6;
+    h += (m.dimensions?.length || 0) * 20 + 6;
     return h;
   };
   const drawModule = (m: Mod, x: number, my: number, h: number) => {
@@ -502,7 +505,7 @@ export async function downloadReportPdf(data: ReportPdfData) {
     setDraw(LINE);
     doc.setLineWidth(0.6);
     doc.line(x + 14, iy - 4, x + colW - 14, iy - 4);
-    m.dimensions.forEach((d) => {
+    (m.dimensions || []).forEach((d) => {
       iy += scoreRow(x + 14, iy, colW - 28, d.name, d.normalized);
     });
   };
@@ -518,8 +521,8 @@ export async function downloadReportPdf(data: ReportPdfData) {
   y += 8;
 
   // ---------- recommendations ----------
-  const recs = data.modules.flatMap((m) =>
-    m.recommendations.map((r) => ({ ...r, code: m.code, score: m.normalized })),
+  const recs = (data.modules || []).flatMap((m) =>
+    (m.recommendations || []).map((r) => ({ ...r, code: m.code, score: m.normalized })),
   );
   if (recs.length) {
     heading("Rekomendasi Pengembangan", "Langkah konkret berdasarkan kategori skor tiap sub-tes.");
@@ -546,25 +549,25 @@ export async function downloadReportPdf(data: ReportPdfData) {
   }
 
   // ---------- 30/60/90 ----------
-  if (data.developmentAreas.length) {
+  if (devAreas.length) {
     heading("Rencana 30 / 60 / 90 Hari");
     const phases = [
       {
         label: "30 HARI",
         title: "Perkuat fondasi",
-        area: data.developmentAreas[0]?.name ?? "",
+        area: devAreas[0]?.name ?? "",
         steps: ["Pelajari materi dasar", "Latihan harian 20 menit", "Catat progres mingguan"],
       },
       {
         label: "60 HARI",
         title: "Latihan terukur",
-        area: data.developmentAreas[1]?.name ?? data.developmentAreas[0]?.name ?? "",
+        area: devAreas[1]?.name ?? devAreas[0]?.name ?? "",
         steps: ["Simulasi terjadwal", "Evaluasi skor tiap 2 minggu", "Umpan balik mentor"],
       },
       {
         label: "90 HARI",
         title: "Siap uji",
-        area: data.developmentAreas[2]?.name ?? data.developmentAreas[0]?.name ?? "",
+        area: devAreas[2]?.name ?? devAreas[0]?.name ?? "",
         steps: ["Simulasi penuh", "Perbaiki titik lemah sisa", "Kunci rutinitas harian"],
       },
     ];

@@ -5,13 +5,23 @@ import { clearParticipant, getParticipantCode } from "@/lib/participant";
 import { Button } from "@/components/ui/button";
 import logoAsset from "@/assets/tfs-platform-logo.png";
 
-export function AppHeader({ subtitle }: { subtitle?: string | undefined }) {
+export interface AppHeaderProps {
+  subtitle?: string | undefined;
+  code?: string | null | undefined;
+  isAdmin?: boolean | undefined;
+}
+
+export function AppHeader({ subtitle, code: overrideCode, isAdmin = false }: AppHeaderProps) {
   const router = useRouter();
   const [code, setCode] = useState<string | null>(null);
 
   useEffect(() => {
-    setCode(getParticipantCode());
-  }, []);
+    if (overrideCode !== undefined) {
+      setCode(overrideCode);
+    } else {
+      setCode(getParticipantCode());
+    }
+  }, [overrideCode]);
 
   function exit() {
     clearParticipant();
@@ -21,7 +31,7 @@ export function AppHeader({ subtitle }: { subtitle?: string | undefined }) {
   return (
     <header className="border-b border-border bg-card/80 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-4">
-        <Link to="/sub-tests" className="flex items-center gap-3">
+        <Link to={isAdmin ? "/admin" : "/sub-tests"} className="flex items-center gap-3">
           <img src={logoAsset} alt="Logo Taruna Future Scan" className="h-9 w-auto" />
           <span className="leading-tight">
             <span className="block font-display text-base font-semibold">
@@ -38,9 +48,15 @@ export function AppHeader({ subtitle }: { subtitle?: string | undefined }) {
               {code}
             </span>
           ) : null}
-          <Button variant="ghost" size="sm" onClick={exit}>
-            <LogOut className="mr-2 size-4" /> Keluar
-          </Button>
+          {isAdmin ? (
+            <Button asChild variant="outline" size="sm">
+              <Link to="/admin">Kembali ke Admin</Link>
+            </Button>
+          ) : (
+            <Button variant="ghost" size="sm" onClick={exit}>
+              <LogOut className="mr-2 size-4" /> Keluar
+            </Button>
+          )}
         </div>
       </div>
     </header>
