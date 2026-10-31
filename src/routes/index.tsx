@@ -122,7 +122,13 @@ function Landing() {
           className="h-9 w-auto rounded"
           loading="lazy"
         />
-        <span>© {new Date().getFullYear()} Taruna Future Scanner</span>
+        <div className="flex items-center gap-3">
+          <span>© {new Date().getFullYear()} Taruna Future Scanner</span>
+          <span>·</span>
+          <Link to="/admin" className="underline hover:text-primary-foreground">
+            Panel Admin
+          </Link>
+        </div>
       </footer>
     </div>
   );

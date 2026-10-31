@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useState } from "react";
@@ -38,7 +38,14 @@ export const Route = createFileRoute("/report")({
 });
 
 function Report() {
-  const participantId = useParticipantId();
+  const location = useLocation();
+  const searchParticipantId =
+    (location.search as { participantId?: string })?.participantId ||
+    (typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("participantId") || undefined
+      : undefined);
+  const storedParticipantId = useParticipantId(!searchParticipantId);
+  const participantId = searchParticipantId || storedParticipantId;
   const fetchReport = useServerFn(getReport);
   const { data, isPending, error } = useQuery({
     queryKey: ["report", participantId],
@@ -128,6 +135,17 @@ function Report() {
     <div className="min-h-screen bg-background">
       <AppHeader subtitle="Laporan Kesiapan" />
       <main className="mx-auto max-w-5xl px-4 py-8">
+        {searchParticipantId ? (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary animate-fade-in print:hidden">
+            <span className="font-medium">
+              Mode Pratinjau Admin: Menampilkan laporan resmi siswa.
+            </span>
+            <Link to="/admin" className="font-semibold underline hover:opacity-85">
+              ← Kembali ke Panel Admin
+            </Link>
+          </div>
+        ) : null}
+
         {/* Header dokumen */}
         <div className="flex flex-wrap items-start justify-between gap-4 animate-fade-in">
           <div>

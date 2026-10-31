@@ -176,3 +176,32 @@ export const getReport = createServerFn({ method: "POST" })
     const { buildReport } = await import("./assessment.server");
     return buildReport(data.participantId);
   });
+
+const adminLoginSchema = z.object({
+  username: z.string().optional(),
+  password: z.string(),
+});
+
+export const adminLoginFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => adminLoginSchema.parse(data))
+  .handler(async ({ data }) => {
+    const { adminLogin } = await import("./assessment.server");
+    return adminLogin(data);
+  });
+
+const adminQuerySchema = z.object({
+  page: z.number().int().min(1).optional().default(1),
+  limit: z.number().int().min(1).max(100).optional().default(10),
+  search: z.string().optional(),
+  status: z.enum(["all", "completed", "in_progress"]).optional().default("all"),
+  targetInstitution: z.string().optional(),
+  sortBy: z.enum(["latest", "oldest", "name_asc"]).optional().default("latest"),
+  adminToken: z.string().optional(),
+});
+
+export const getAdminReportsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => adminQuerySchema.parse(data ?? {}))
+  .handler(async ({ data }) => {
+    const { getAdminReports } = await import("./assessment.server");
+    return getAdminReports(data);
+  });

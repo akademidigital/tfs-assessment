@@ -1,4 +1,5 @@
 // Server-only assessment logic using Prisma ORM.
+import crypto from "node:crypto";
 import { Prisma, type AssessmentSession } from "@prisma/client";
 import { prisma } from "./prisma";
 import {
@@ -1255,4 +1256,333 @@ export async function findParticipant(input: {
     return { participantId: match.id, code: match.code, fullName: match.fullName };
   }
   return null;
+}
+
+export function createAdminToken(): string {
+  const secret =
+    process.env["ADMIN_SECRET"] ||
+    process.env["ADMIN_PASSWORD"] ||
+    "tfs-assessment-admin-secret-key-2026";
+  const now = Date.now().toString();
+  const signature = crypto.createHmac("sha256", secret).update(now).digest("hex");
+  return Buffer.from(`${now}:${signature}`).toString("base64url");
+}
+
+export function verifyAdminToken(token: string | undefined | null): boolean {
+  if (!token) return false;
+  try {
+    const secret =
+      process.env["ADMIN_SECRET"] ||
+      process.env["ADMIN_PASSWORD"] ||
+      "tfs-assessment-admin-secret-key-2026";
+    const decoded = Buffer.from(token, "base64url").toString("utf8");
+    const [timeStr, signature] = decoded.split(":");
+    if (!timeStr || !signature) return false;
+
+    const timestamp = Number(timeStr);
+    const maxAgeMs = 24 * 60 * 60 * 1000; // 24 hours
+    if (isNaN(timestamp) || Date.now() - timestamp > maxAgeMs || timestamp > Date.now() + 60000) {
+      return false;
+    }
+
+    const expected = crypto.createHmac("sha256", secret).update(timeStr).digest("hex");
+    if (signature.length !== expected.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  } catch {
+    return false;
+  }
+}
+
+export async function adminLogin(input: { username?: string | undefined; password?: string | undefined }) {
+  const expectedUser = process.env["ADMIN_USERNAME"] || "admin";
+  const expectedPass = process.env["ADMIN_PASSWORD"] || "tfsadmin2026";
+
+  const user = (input.username || "").trim();
+  const pass = (input.password || "").trim();
+
+  if (user !== expectedUser || pass !== expectedPass) {
+    throw new Error("Username atau password admin salah.");
+  }
+
+  const token = createAdminToken();
+  return {
+    success: true,
+    token,
+    username: expectedUser,
+  };
+}
+
+export interface AdminReportsInput {
+  page?: number | undefined;
+  limit?: number | undefined;
+  search?: string | undefined;
+  status?: "all" | "completed" | "in_progress" | undefined;
+  targetInstitution?: string | undefined;
+  sortBy?: "latest" | "oldest" | "name_asc" | undefined;
+  adminToken?: string | undefined;
+}
+
+export interface AdminStudentItem {
+  participantId: string;
+  code: string | null;
+  fullName: string;
+  email: string | null;
+  whatsapp: string | null;
+  gender: string | null;
+  schoolName: string | null;
+  classLevel: string | null;
+  city: string | null;
+  targetInstitution: string | null;
+  targetProgram: string | null;
+  guardianName: string | null;
+  guardianWhatsapp: string | null;
+  registeredAt: string;
+  session: {
+    id: string;
+    status: string;
+    isCompleted: boolean;
+    startedAt: string;
+    completedAt: string | null;
+    completedModulesCount: number;
+    totalModulesCount: number;
+    readinessScore: number | null;
+    readinessCategory: string | null;
+    interpretation: string | null;
+    moduleBreakdown: {
+      code: string;
+      name: string;
+      score: number;
+      category: string;
+    }[];
+  } | null;
+}
+
+export interface AdminReportsPayload {
+  items: AdminStudentItem[];
+  pagination: {
+    page: number;
+    limit: number;
+    totalCount: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPrevPage: boolean;
+  };
+  stats: {
+    totalParticipants: number;
+    totalCompleted: number;
+    totalInProgress: number;
+    averageReadiness: number | null;
+  };
+  availableTargets: string[];
+}
+
+export async function getAdminReports(input: AdminReportsInput = {}): Promise<AdminReportsPayload> {
+  if (!verifyAdminToken(input.adminToken)) {
+    throw new Error("Akses ditolak: Silakan login sebagai admin terlebih dahulu.");
+  }
+
+  const page = Math.max(1, Number(input.page) || 1);
+  const limit = Math.min(100, Math.max(1, Number(input.limit) || 10));
+  const skip = (page - 1) * limit;
+
+  const where: Prisma.ProfileWhereInput = {};
+
+  if (input.status === "completed") {
+    where.sessions = {
+      some: {
+        scoringCalculated: true,
+      },
+    };
+  } else if (input.status === "in_progress") {
+    where.sessions = {
+      some: {
+        scoringCalculated: false,
+      },
+    };
+  }
+
+  if (input.targetInstitution && input.targetInstitution !== "all") {
+    where.targetInstitution = input.targetInstitution;
+  }
+
+  if (input.search && input.search.trim()) {
+    const q = input.search.trim();
+    where.OR = [
+      { fullName: { contains: q, mode: "insensitive" } },
+      { code: { contains: q, mode: "insensitive" } },
+      { schoolName: { contains: q, mode: "insensitive" } },
+      { whatsapp: { contains: q } },
+      { city: { contains: q, mode: "insensitive" } },
+      { targetInstitution: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  let orderBy: Prisma.ProfileOrderByWithRelationInput = { createdAt: "desc" };
+  if (input.sortBy === "oldest") {
+    orderBy = { createdAt: "asc" };
+  } else if (input.sortBy === "name_asc") {
+    orderBy = { fullName: "asc" };
+  }
+
+  const [
+    totalParticipants,
+    totalCompleted,
+    totalInProgress,
+    avgResult,
+    targetRows,
+    filteredCount,
+    profiles,
+  ] = await Promise.all([
+    prisma.profile.count(),
+    prisma.profile.count({ where: { sessions: { some: { scoringCalculated: true } } } }),
+    prisma.profile.count({ where: { sessions: { some: { scoringCalculated: false } } } }),
+    prisma.overallResult.aggregate({ _avg: { readinessScore: true } }),
+    prisma.profile.findMany({
+      where: { targetInstitution: { not: null } },
+      distinct: ["targetInstitution"],
+      select: { targetInstitution: true },
+    }),
+    prisma.profile.count({ where }),
+    prisma.profile.findMany({
+      where,
+      orderBy,
+      skip,
+      take: limit,
+      select: {
+        id: true,
+        code: true,
+        fullName: true,
+        email: true,
+        whatsapp: true,
+        gender: true,
+        schoolName: true,
+        classLevel: true,
+        city: true,
+        targetInstitution: true,
+        targetProgram: true,
+        guardianName: true,
+        guardianWhatsapp: true,
+        createdAt: true,
+        sessions: {
+          orderBy: { startedAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            status: true,
+            scoringCalculated: true,
+            startedAt: true,
+            completedAt: true,
+            overallResults: {
+              take: 1,
+              select: {
+                readinessScore: true,
+                category: true,
+                interpretation: true,
+              },
+            },
+            progress: {
+              select: {
+                moduleId: true,
+                status: true,
+                answeredCount: true,
+                totalItems: true,
+                module: {
+                  select: {
+                    code: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+            assessmentResults: {
+              select: {
+                moduleId: true,
+                normalizedScore: true,
+                category: true,
+                module: {
+                  select: {
+                    code: true,
+                    name: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    }),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredCount / limit));
+  const availableTargets = targetRows
+    .map((t) => t.targetInstitution)
+    .filter((t): t is string => Boolean(t && t.trim()))
+    .sort();
+
+  const items: AdminStudentItem[] = profiles.map((p) => {
+    const session = p.sessions[0];
+    const overall = session?.overallResults[0];
+    const completedModules =
+      session?.progress.filter((x) => x.status === "completed").length ?? 0;
+    const totalModules = session?.progress.length || 9;
+    const isCompleted = Boolean(session?.scoringCalculated);
+
+    return {
+      participantId: p.id,
+      code: p.code,
+      fullName: p.fullName,
+      email: p.email,
+      whatsapp: p.whatsapp,
+      gender: p.gender,
+      schoolName: p.schoolName,
+      classLevel: p.classLevel,
+      city: p.city,
+      targetInstitution: p.targetInstitution,
+      targetProgram: p.targetProgram,
+      guardianName: p.guardianName,
+      guardianWhatsapp: p.guardianWhatsapp,
+      registeredAt: p.createdAt.toISOString(),
+      session: session
+        ? {
+            id: session.id,
+            status: session.status,
+            isCompleted,
+            startedAt: session.startedAt.toISOString(),
+            completedAt: session.completedAt?.toISOString() ?? null,
+            completedModulesCount: completedModules,
+            totalModulesCount: totalModules,
+            readinessScore: overall ? Math.round(Number(overall.readinessScore)) : null,
+            readinessCategory: overall?.category ?? null,
+            interpretation: overall?.interpretation ?? null,
+            moduleBreakdown: session.assessmentResults.map((r) => ({
+              code: r.module.code,
+              name: r.module.name,
+              score: Math.round(Number(r.normalizedScore)),
+              category: r.category,
+            })),
+          }
+        : null,
+    };
+  });
+
+  return {
+    items,
+    pagination: {
+      page,
+      limit,
+      totalCount: filteredCount,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPrevPage: page > 1,
+    },
+    stats: {
+      totalParticipants,
+      totalCompleted,
+      totalInProgress,
+      averageReadiness: avgResult._avg.readinessScore
+        ? Math.round(Number(avgResult._avg.readinessScore))
+        : null,
+    },
+    availableTargets,
+  };
 }
