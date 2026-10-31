@@ -358,6 +358,91 @@ function AdminPage() {
     return pages;
   })();
 
+  if (!adminToken) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col justify-between">
+        <header className="border-b border-border bg-card/90 backdrop-blur px-4 py-3 sm:px-6">
+          <div className="mx-auto flex max-w-5xl items-center justify-between">
+            <Link to="/" className="flex items-center gap-3">
+              <img src={platformLogo} alt="Logo TFS" className="h-9 w-auto" />
+              <div>
+                <span className="font-display text-base font-bold tracking-tight">Taruna Future Scanner</span>
+                <span className="block text-xs text-muted-foreground">Panel Administrator</span>
+              </div>
+            </Link>
+            <Button asChild variant="ghost" size="sm" className="text-xs">
+              <Link to="/">← Kembali ke Beranda</Link>
+            </Button>
+          </div>
+        </header>
+
+        <main className="flex-1 flex items-center justify-center p-4">
+          <Card className="w-full max-w-md border-border/80 shadow-lg">
+            <CardHeader className="text-center space-y-2">
+              <div className="mx-auto flex size-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                <Lock className="size-6" />
+              </div>
+              <CardTitle className="font-display text-2xl font-bold">Masuk Panel Admin</CardTitle>
+              <CardDescription className="text-xs">
+                Masukkan akun admin untuk mengakses dan memantau seluruh laporan hasil asesmen siswa.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleLogin} className="space-y-4">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground">Username</label>
+                  <Input
+                    type="text"
+                    required
+                    value={loginUsername}
+                    onChange={(e) => setLoginUsername(e.target.value)}
+                    placeholder="admin"
+                    className="h-10 text-sm"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-foreground">Kata Sandi</label>
+                  <div className="relative">
+                    <Input
+                      type={showPassword ? "text" : "password"}
+                      required
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Masukkan kata sandi admin"
+                      className="h-10 text-sm pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((p) => !p)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    >
+                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <Button type="submit" disabled={loginLoading} className="w-full h-10 font-semibold text-sm mt-2">
+                  {loginLoading ? (
+                    <>
+                      <RefreshCw className="mr-2 size-4 animate-spin" /> Memeriksa...
+                    </>
+                  ) : (
+                    "Masuk ke Dashboard"
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </main>
+
+        <footer className="py-4 text-center text-xs text-muted-foreground border-t border-border">
+          <span>© {new Date().getFullYear()} Taruna Future Scanner · Akses Terbatas Khusus Pengelola</span>
+        </footer>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background">
       {/* Top Navigation Bar */}
@@ -408,6 +493,17 @@ function AdminPage() {
 
             <Button asChild variant="ghost" size="sm" className="text-xs">
               <Link to="/">Beranda</Link>
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleLogout}
+              className="text-xs text-destructive hover:bg-destructive/10"
+              title="Keluar dari sesi admin"
+            >
+              <LogOut className="mr-1.5 size-3.5" />
+              Keluar
             </Button>
           </div>
         </div>
