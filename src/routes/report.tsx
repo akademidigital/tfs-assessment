@@ -96,6 +96,8 @@ function Report() {
   const participantId = searchParticipantId || storedParticipantId;
   const isAdminView = Boolean(searchParticipantId);
 
+  const [downloading, setDownloading] = useState(false);
+
   const fetchReport = useServerFn(getReport);
   const { data, isPending, error } = useQuery({
     queryKey: ["report", participantId],
@@ -200,9 +202,8 @@ function Report() {
   const strengths = data.strengths ?? [];
   const developmentAreas = data.developmentAreas ?? [];
 
-  const [downloading, setDownloading] = useState(false);
   const download = async () => {
-    if (downloading) return;
+    if (downloading || !data) return;
     setDownloading(true);
     try {
       const { downloadReportPdf } = await import("@/lib/report-pdf");
