@@ -29,12 +29,29 @@ import {
   BarChart3,
   X,
 } from "lucide-react";
-import { getAdminReportsFn, getReport, adminLoginFn } from "@/lib/assessment.functions";
+import {
+  getAdminReportsFn,
+  getAdminExportParticipantsFn,
+  getReport,
+  adminLoginFn,
+} from "@/lib/assessment.functions";
 import type { AdminStudentItem } from "@/lib/assessment.server";
+import {
+  exportParticipantsToExcel,
+  exportParticipantsToCsv,
+} from "@/lib/admin-export";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Table,
   TableBody,
@@ -120,59 +137,6 @@ function getScoreTone(score: number | null | undefined) {
   return { badge: "bg-rose-500/15 text-rose-600 border-rose-500/30", text: "text-rose-600" };
 }
 
-function exportToCsv(students: AdminStudentItem[], filename = "laporan-siswa-tfs.csv") {
-  const headers = [
-    "No",
-    "Kode Peserta",
-    "Nama Lengkap",
-    "Gender",
-    "Asal Sekolah",
-    "Kelas",
-    "Kota",
-    "WhatsApp",
-    "Email",
-    "Target Institusi",
-    "Target Program",
-    "Status Asesmen",
-    "Modul Selesai",
-    "Indeks Kesiapan (%)",
-    "Kategori Kesiapan",
-    "Tanggal Terdaftar",
-    "Tanggal Selesai",
-  ];
-
-  const rows = students.map((s, idx) => [
-    idx + 1,
-    s.code || "-",
-    `"${(s.fullName || "").replace(/"/g, '""')}"`,
-    s.gender || "-",
-    `"${(s.schoolName || "").replace(/"/g, '""')}"`,
-    s.classLevel || "-",
-    `"${(s.city || "").replace(/"/g, '""')}"`,
-    s.whatsapp ? `'${s.whatsapp}` : "-",
-    s.email || "-",
-    `"${(s.targetInstitution || "").replace(/"/g, '""')}"`,
-    `"${(s.targetProgram || "").replace(/"/g, '""')}"`,
-    s.session?.isCompleted ? "Selesai" : "Sedang Mengerjakan",
-    `${s.session?.completedModulesCount ?? 0}/${s.session?.totalModulesCount ?? 9}`,
-    s.session?.readinessScore != null ? s.session.readinessScore : "-",
-    `"${(s.session?.readinessCategory || "-").replace(/"/g, '""')}"`,
-    new Date(s.registeredAt).toLocaleDateString("id-ID"),
-    s.session?.completedAt ? new Date(s.session.completedAt).toLocaleDateString("id-ID") : "-",
-  ]);
-
-  const csvContent = "\uFEFF" + [headers.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
-  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.setAttribute("href", url);
-  link.setAttribute("download", filename);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
 function AdminPage() {
   const searchParams = Route.useSearch();
   const navigate = Route.useNavigate();
@@ -230,9 +194,86 @@ function AdminPage() {
   const [searchInput, setSearchInput] = useState(searchParams.search || "");
   const [selectedStudent, setSelectedStudent] = useState<AdminStudentItem | null>(null);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [exportingMode, setExportingMode] = useState<"all" | "page" | "csv" | null>(null);
 
   const fetchReports = useServerFn(getAdminReportsFn);
   const fetchSingleReport = useServerFn(getReport);
+  const fetchAllForExport = useServerFn(getAdminExportParticipantsFn);
+
+  const handleExportExcelAll = async () => {
+    if (exportingMode) return;
+    setExportingMode("all");
+    try {
+      toast.info("Menyiapkan data seluruh peserta untuk ekspor Excel...");
+      const allStudents = await fetchAllForExport({
+        data: {
+          search: searchParams.search,
+          status: searchParams.status,
+          targetInstitution: searchParams.targetInstitution,
+          sortBy: searchParams.sortBy,
+          adminToken: adminToken ?? undefined,
+        },
+      });
+
+      if (!allStudents || allStudents.length === 0) {
+        toast.error("Tidak ada data peserta untuk diekspor.");
+        return;
+      }
+
+      const dateTag = new Date().toISOString().split("T")[0];
+      exportParticipantsToExcel(allStudents, `data-peserta-tfs-lengkap-${dateTag}.xls`);
+      toast.success(`Berhasil mengekspor ${allStudents.length} data peserta ke Excel (.xls)!`);
+    } catch (err) {
+      console.error("Gagal ekspor Excel:", err);
+      toast.error(err instanceof Error ? err.message : "Gagal mengekspor data peserta.");
+    } finally {
+      setExportingMode(null);
+    }
+  };
+
+  const handleExportExcelPage = () => {
+    if (!data?.items?.length) {
+      toast.error("Tidak ada data peserta di halaman ini.");
+      return;
+    }
+    const dateTag = new Date().toISOString().split("T")[0];
+    exportParticipantsToExcel(
+      data.items,
+      `data-peserta-tfs-halaman-${currentPage}-${dateTag}.xls`,
+    );
+    toast.success(`Berhasil mengekspor ${data.items.length} data peserta halaman ini ke Excel (.xls)!`);
+  };
+
+  const handleExportCsvAll = async () => {
+    if (exportingMode) return;
+    setExportingMode("csv");
+    try {
+      toast.info("Menyiapkan data seluruh peserta untuk ekspor CSV...");
+      const allStudents = await fetchAllForExport({
+        data: {
+          search: searchParams.search,
+          status: searchParams.status,
+          targetInstitution: searchParams.targetInstitution,
+          sortBy: searchParams.sortBy,
+          adminToken: adminToken ?? undefined,
+        },
+      });
+
+      if (!allStudents || allStudents.length === 0) {
+        toast.error("Tidak ada data peserta untuk diekspor.");
+        return;
+      }
+
+      const dateTag = new Date().toISOString().split("T")[0];
+      exportParticipantsToCsv(allStudents, `data-peserta-tfs-lengkap-${dateTag}.csv`);
+      toast.success(`Berhasil mengekspor ${allStudents.length} data peserta ke format CSV!`);
+    } catch (err) {
+      console.error("Gagal ekspor CSV:", err);
+      toast.error(err instanceof Error ? err.message : "Gagal mengekspor data peserta.");
+    } finally {
+      setExportingMode(null);
+    }
+  };
 
   const { data, isPending, isFetching, refetch, error } = useQuery({
     queryKey: [
@@ -473,23 +514,74 @@ function AdminPage() {
               {isFetching ? "Memuat..." : "Segarkan"}
             </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                if (data?.items?.length) {
-                  exportToCsv(data.items, `laporan-tfs-halaman-${currentPage}.csv`);
-                  toast.success("Data siswa berhasil diekspor ke format CSV.");
-                } else {
-                  toast.error("Tidak ada data untuk diekspor.");
-                }
-              }}
-              disabled={!data?.items?.length}
-              className="text-xs"
-            >
-              <FileSpreadsheet className="mr-1.5 size-3.5 text-emerald-600" />
-              Ekspor Halaman CSV
-            </Button>
+            {/* Tombol Export Excel & CSV */}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!data?.items?.length || Boolean(exportingMode)}
+                  className="text-xs font-medium border-emerald-600/30 hover:bg-emerald-500/10 hover:text-emerald-700"
+                >
+                  <FileSpreadsheet
+                    className={cn(
+                      "mr-1.5 size-3.5 text-emerald-600",
+                      exportingMode && "animate-spin",
+                    )}
+                  />
+                  {exportingMode ? "Mengekspor..." : "Export Excel Peserta"}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel className="text-xs font-semibold text-muted-foreground">
+                  Format Ekspor Data Peserta
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleExportExcelAll}
+                  disabled={Boolean(exportingMode)}
+                  className="cursor-pointer text-xs py-2"
+                >
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <FileSpreadsheet className="size-3.5 text-emerald-600" /> Export Excel — Semua Peserta
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Unduh {data?.pagination?.totalCount ?? 0} data peserta (.xls)
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={handleExportExcelPage}
+                  disabled={Boolean(exportingMode)}
+                  className="cursor-pointer text-xs py-2"
+                >
+                  <div className="flex flex-col">
+                    <span className="font-semibold text-foreground flex items-center gap-1.5">
+                      <FileSpreadsheet className="size-3.5 text-emerald-600" /> Export Excel — Halaman Ini
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Unduh {data?.items?.length ?? 0} peserta di halaman {currentPage} (.xls)
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={handleExportCsvAll}
+                  disabled={Boolean(exportingMode)}
+                  className="cursor-pointer text-xs py-2 text-muted-foreground hover:text-foreground"
+                >
+                  <div className="flex flex-col">
+                    <span className="font-medium flex items-center gap-1.5">
+                      <Download className="size-3.5" /> Export Format CSV
+                    </span>
+                    <span className="text-[11px]">
+                      Format tabel CSV standar (.csv)
+                    </span>
+                  </div>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
 
             <Button asChild variant="ghost" size="sm" className="text-xs">
               <Link to="/">Beranda</Link>

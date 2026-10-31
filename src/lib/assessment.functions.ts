@@ -205,3 +205,10 @@ export const getAdminReportsFn = createServerFn({ method: "POST" })
     const { getAdminReports } = await import("./assessment.server");
     return getAdminReports(data);
   });
+
+export const getAdminExportParticipantsFn = createServerFn({ method: "POST" })
+  .inputValidator((data: unknown) => adminQuerySchema.parse(data ?? {}))
+  .handler(async ({ data }) => {
+    const { getAdminExportParticipants } = await import("./assessment.server");
+    return getAdminExportParticipants(data);
+  });

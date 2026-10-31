@@ -1331,11 +1331,17 @@ export interface AdminStudentItem {
   gender: string | null;
   schoolName: string | null;
   classLevel: string | null;
+  major?: string | null | undefined;
   city: string | null;
+  birthPlace?: string | null | undefined;
+  birthDate?: string | null | undefined;
+  heightCm?: number | null | undefined;
+  weightKg?: number | null | undefined;
   targetInstitution: string | null;
   targetProgram: string | null;
   guardianName: string | null;
   guardianWhatsapp: string | null;
+  referralSource?: string | null | undefined;
   registeredAt: string;
   session: {
     id: string;
@@ -1457,11 +1463,17 @@ export async function getAdminReports(input: AdminReportsInput = {}): Promise<Ad
         gender: true,
         schoolName: true,
         classLevel: true,
+        major: true,
         city: true,
+        birthPlace: true,
+        birthDate: true,
+        heightCm: true,
+        weightKg: true,
         targetInstitution: true,
         targetProgram: true,
         guardianName: true,
         guardianWhatsapp: true,
+        referralSource: true,
         createdAt: true,
         sessions: {
           orderBy: { startedAt: "desc" },
@@ -1536,11 +1548,17 @@ export async function getAdminReports(input: AdminReportsInput = {}): Promise<Ad
       gender: p.gender,
       schoolName: p.schoolName,
       classLevel: p.classLevel,
+      major: p.major,
       city: p.city,
+      birthPlace: p.birthPlace,
+      birthDate: p.birthDate ? (p.birthDate.toISOString().split("T")[0] ?? null) : null,
+      heightCm: p.heightCm,
+      weightKg: p.weightKg,
       targetInstitution: p.targetInstitution,
       targetProgram: p.targetProgram,
       guardianName: p.guardianName,
       guardianWhatsapp: p.guardianWhatsapp,
+      referralSource: p.referralSource,
       registeredAt: p.createdAt.toISOString(),
       session: session
         ? {
@@ -1585,4 +1603,149 @@ export async function getAdminReports(input: AdminReportsInput = {}): Promise<Ad
     },
     availableTargets,
   };
+}
+
+export async function getAdminExportParticipants(
+  input: AdminReportsInput = {},
+): Promise<AdminStudentItem[]> {
+  if (!verifyAdminToken(input.adminToken)) {
+    throw new Error("Akses ditolak: Silakan login sebagai admin terlebih dahulu.");
+  }
+
+  const where: Prisma.ProfileWhereInput = {};
+
+  if (input.status === "completed") {
+    where.sessions = {
+      some: {
+        scoringCalculated: true,
+      },
+    };
+  } else if (input.status === "in_progress") {
+    where.sessions = {
+      some: {
+        scoringCalculated: false,
+      },
+    };
+  }
+
+  if (input.targetInstitution && input.targetInstitution !== "all") {
+    where.targetInstitution = input.targetInstitution;
+  }
+
+  if (input.search && input.search.trim()) {
+    const q = input.search.trim();
+    where.OR = [
+      { fullName: { contains: q, mode: "insensitive" } },
+      { code: { contains: q, mode: "insensitive" } },
+      { schoolName: { contains: q, mode: "insensitive" } },
+      { whatsapp: { contains: q } },
+      { city: { contains: q, mode: "insensitive" } },
+      { targetInstitution: { contains: q, mode: "insensitive" } },
+    ];
+  }
+
+  let orderBy: Prisma.ProfileOrderByWithRelationInput = { createdAt: "desc" };
+  if (input.sortBy === "oldest") {
+    orderBy = { createdAt: "asc" };
+  } else if (input.sortBy === "name_asc") {
+    orderBy = { fullName: "asc" };
+  }
+
+  const profiles = await prisma.profile.findMany({
+    where,
+    orderBy,
+    take: 10000,
+    select: {
+      id: true,
+      code: true,
+      fullName: true,
+      email: true,
+      whatsapp: true,
+      gender: true,
+      schoolName: true,
+      classLevel: true,
+      major: true,
+      city: true,
+      birthPlace: true,
+      birthDate: true,
+      heightCm: true,
+      weightKg: true,
+      targetInstitution: true,
+      targetProgram: true,
+      guardianName: true,
+      guardianWhatsapp: true,
+      referralSource: true,
+      createdAt: true,
+      sessions: {
+        orderBy: { startedAt: "desc" },
+        take: 1,
+        select: {
+          id: true,
+          status: true,
+          scoringCalculated: true,
+          startedAt: true,
+          completedAt: true,
+          overallResults: {
+            take: 1,
+            select: {
+              readinessScore: true,
+              category: true,
+              interpretation: true,
+            },
+          },
+          progress: {
+            select: {
+              status: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  return profiles.map((p) => {
+    const session = p.sessions[0];
+    const overall = session?.overallResults[0];
+    const completedModules =
+      session?.progress.filter((x) => x.status === "completed").length ?? 0;
+    const isCompleted = Boolean(session?.scoringCalculated);
+
+    return {
+      participantId: p.id,
+      code: p.code,
+      fullName: p.fullName,
+      email: p.email,
+      whatsapp: p.whatsapp,
+      gender: p.gender,
+      schoolName: p.schoolName,
+      classLevel: p.classLevel,
+      major: p.major,
+      city: p.city,
+      birthPlace: p.birthPlace,
+      birthDate: p.birthDate ? (p.birthDate.toISOString().split("T")[0] ?? null) : null,
+      heightCm: p.heightCm,
+      weightKg: p.weightKg,
+      targetInstitution: p.targetInstitution,
+      targetProgram: p.targetProgram,
+      guardianName: p.guardianName,
+      guardianWhatsapp: p.guardianWhatsapp,
+      referralSource: p.referralSource,
+      registeredAt: p.createdAt.toISOString(),
+      session: session
+        ? {
+            id: session.id,
+            status: session.status,
+            isCompleted,
+            startedAt: session.startedAt.toISOString(),
+            completedAt: session.completedAt?.toISOString() ?? null,
+            completedModulesCount: completedModules,
+            totalModulesCount: 9,
+            readinessScore: overall ? Math.round(Number(overall.readinessScore)) : null,
+            readinessCategory: overall?.category ?? null,
+            interpretation: overall?.interpretation ?? null,
+            moduleBreakdown: [],
+          }
+        : null,
+    };
+  });
 }
