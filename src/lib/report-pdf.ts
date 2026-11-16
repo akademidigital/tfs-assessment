@@ -632,5 +632,6 @@ export async function downloadReportPdf(data: ReportPdfData) {
     .replace(/[^\w\s-]/g, "")
     .trim()
     .replace(/\s+/g, "-");
-  doc.save(`Laporan-TFS-${safeName || "peserta"}.pdf`);
+  const codeSuffix = data.participant.code ? `-${data.participant.code}` : "";
+  doc.save(`Laporan-TFS-${safeName || "peserta"}${codeSuffix}.pdf`);
 }
