@@ -222,7 +222,13 @@ function Report() {
         {/* Header dokumen */}
         <div className="flex flex-wrap items-start justify-between gap-4 animate-fade-in">
           <div>
-            <Badge className="bg-success/15 text-success hover:bg-success/15">LAPORAN FINAL</Badge>
+            {data.isCompleted === false ? (
+              <Badge className="bg-amber-500/15 text-amber-600 hover:bg-amber-500/15">
+                LAPORAN PROGRES ({data.completedModulesCount ?? 0}/{data.totalModulesCount ?? 9} SUB-TES)
+              </Badge>
+            ) : (
+              <Badge className="bg-success/15 text-success hover:bg-success/15">LAPORAN FINAL</Badge>
+            )}
             <h1 className="mt-3 font-display text-2xl font-semibold tracking-tight">
               Laporan Kesiapan Calon Taruna
             </h1>

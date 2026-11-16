@@ -49,6 +49,9 @@ export type ReportPdfData = {
   developmentAreas: Dim[];
   assessmentId: string;
   generatedAt: string;
+  isCompleted?: boolean;
+  completedModulesCount?: number;
+  totalModulesCount?: number;
 };
 
 const MARGIN = 40;
@@ -252,7 +255,11 @@ export async function downloadReportPdf(data: ReportPdfData) {
   doc.setFont("helvetica", "bold");
   doc.setFontSize(8);
   setInk(GOLD);
-  doc.text("LAPORAN FINAL · TARUNA FUTURE SCANNER", hx, 44);
+  const isComplete = data.isCompleted !== false;
+  const headerTag = isComplete
+    ? "LAPORAN FINAL · TARUNA FUTURE SCANNER"
+    : `LAPORAN PROGRES (${data.completedModulesCount ?? 0}/${data.totalModulesCount ?? 9} SUB-TES) · TARUNA FUTURE SCANNER`;
+  doc.text(headerTag, hx, 44);
   doc.setFontSize(19);
   setInk([255, 255, 255]);
   doc.text("Laporan Kesiapan Calon Taruna", hx, 68);
@@ -434,10 +441,11 @@ export async function downloadReportPdf(data: ReportPdfData) {
       const lx = cx + (R + 20) * Math.cos(a);
       const ly = cy + (R + 20) * Math.sin(a) + 2.5;
       const align = Math.abs(Math.cos(a)) < 0.3 ? "center" : Math.cos(a) > 0 ? "left" : "right";
+      const isPending = m.category === "Belum Dikerjakan" || m.category === "-";
       setInk(NAVY);
       doc.text(m.code, lx, ly, { align: align as "left" });
-      setInk(toneColor(m.normalized));
-      doc.text(String(Math.round(m.normalized)), lx, ly + 9, { align: align as "left" });
+      setInk(isPending ? GREY : toneColor(m.normalized));
+      doc.text(isPending ? "-" : String(Math.round(m.normalized)), lx, ly + 9, { align: align as "left" });
     });
     y += boxH + 20;
   }
@@ -483,7 +491,11 @@ export async function downloadReportPdf(data: ReportPdfData) {
     return h;
   };
   const drawModule = (m: Mod, x: number, my: number, h: number) => {
-    card(x, my, colW, h, toneTint(m.normalized), toneColor(m.normalized));
+    const isPending = m.category === "Belum Dikerjakan" || m.category === "-";
+    const bgTint: RGB = isPending ? [248, 250, 253] : toneTint(m.normalized);
+    const borderCol: RGB = isPending ? [220, 226, 236] : toneColor(m.normalized);
+    const numColor: RGB = isPending ? [130, 140, 155] : toneColor(m.normalized);
+    card(x, my, colW, h, bgTint, borderCol);
     const pw = pill(x + 14, my + 14, m.code, [255, 255, 255], NAVY);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(9);
@@ -491,13 +503,17 @@ export async function downloadReportPdf(data: ReportPdfData) {
     doc.text(lines(m.name, colW - 34 - pw, 9, "bold")[0] ?? m.name, x + 14 + pw + 6, my + 23);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(22);
-    setInk(toneColor(m.normalized));
-    doc.text(String(Math.round(m.normalized)), x + 14, my + 54);
+    setInk(numColor);
+    doc.text(isPending ? "-" : String(Math.round(m.normalized)), x + 14, my + 54);
     doc.setFont("helvetica", "normal");
     doc.setFontSize(7.5);
     setInk(GREY);
-    doc.text(`/ 100 · ${toneLabel(m.normalized)} · ${m.category}`, x + 46, my + 52);
-    bar(x + 14, my + 60, colW - 28, m.normalized, 5);
+    doc.text(
+      isPending ? "Belum diselesaikan" : `/ 100 · ${toneLabel(m.normalized)} · ${m.category}`,
+      x + (isPending ? 36 : 46),
+      my + 52,
+    );
+    bar(x + 14, my + 60, colW - 28, isPending ? 0 : m.normalized, 5);
     let iy = my + 74;
     if (m.interpretation) {
       iy += drawText(m.interpretation, x + 14, iy - 4, colW - 28, 7.5, "normal", GREY) + 2;
@@ -604,8 +620,12 @@ export async function downloadReportPdf(data: ReportPdfData) {
 
   // ---------- disclaimer ----------
   ensure(46);
+  const statusNote =
+    data.isCompleted === false
+      ? ` Catatan: Laporan Progres (${data.completedModulesCount ?? 0}/${data.totalModulesCount ?? 9} sub-tes selesai).`
+      : "";
   drawText(
-    `Laporan ini bersifat rahasia dan digunakan untuk keperluan pembinaan. Hasil bukan diagnosis medis maupun keputusan seleksi resmi. ID Asesmen: ${data.assessmentId} · Dibuat ${new Date(data.generatedAt).toLocaleString("id-ID")}`,
+    `Laporan ini bersifat rahasia dan digunakan untuk keperluan pembinaan. Hasil bukan diagnosis medis maupun keputusan seleksi resmi. ID Asesmen: ${data.assessmentId} · Dibuat ${new Date(data.generatedAt).toLocaleString("id-ID")}.${statusNote}`,
     MARGIN,
     y,
     contentW,

@@ -885,6 +885,9 @@ export async function finalizeSession(userId: string) {
 export type AssessmentReport = {
   assessmentId: string;
   generatedAt: string;
+  isCompleted?: boolean;
+  completedModulesCount?: number;
+  totalModulesCount?: number;
   participant: {
     fullName: string;
     email: string | null;
@@ -1024,8 +1027,8 @@ export async function buildReport(
       isSensitive: m.isSensitive,
       normalized: r ? Number(r.normalizedScore) : 0,
       raw: r ? Number(r.rawScore) : 0,
-      category: r?.category ?? "-",
-      interpretation: r?.interpretation ?? "",
+      category: r?.category ?? "Belum Dikerjakan",
+      interpretation: r?.interpretation ?? (r ? "" : "Sub-tes ini belum diselesaikan oleh peserta."),
       dimensions: ds,
       recommendations: recommendations.filter(
         (rec) => rec.moduleId === m.id && (!rec.category || rec.category === r?.category),
@@ -1037,9 +1040,48 @@ export async function buildReport(
     m.dimensions.map((d) => ({ ...d, moduleName: m.name, moduleCode: m.code })),
   );
 
-  const reportPayload = {
+  let overallPayload: {
+    readiness: number;
+    category: string;
+    interpretation: string;
+  };
+
+  if (overall) {
+    overallPayload = {
+      readiness: Number(overall.readinessScore),
+      category: overall.category,
+      interpretation: overall.interpretation,
+    };
+  } else if (results.length > 0) {
+    const parsedBands = await getOverallBands();
+    const avgScore =
+      Math.round(
+        (results.reduce((s, r) => s + Number(r.normalizedScore), 0) / results.length) * 10,
+      ) / 10;
+    const band = matchBandByScore(parsedBands, avgScore);
+    overallPayload = {
+      readiness: avgScore,
+      category: band?.category ? `${band.category} (Sementara)` : "Dalam Proses",
+      interpretation: `Skor kesiapan sementara dihitung dari ${results.length} dari ${modules.length} sub-tes yang telah diselesaikan. ${band?.interpretation ?? ""}`,
+    };
+  } else {
+    overallPayload = {
+      readiness: 0,
+      category: "Belum Dikerjakan",
+      interpretation: `Peserta belum mengerjakan sub-tes asesmen (0/${modules.length} modul selesai).`,
+    };
+  }
+
+  const isCompleted = session.status === "completed" && Boolean(overall);
+  const completedModulesCount = results.length;
+  const totalModulesCount = modules.length;
+
+  const reportPayload: AssessmentReport = {
     assessmentId: session.id,
     generatedAt: new Date().toISOString(),
+    isCompleted,
+    completedModulesCount,
+    totalModulesCount,
     participant: {
       fullName: profile.fullName,
       email: profile.email,
@@ -1048,13 +1090,7 @@ export async function buildReport(
       city: profile.city,
       code: profile.code,
     },
-    overall: overall
-      ? {
-          readiness: Number(overall.readinessScore),
-          category: overall.category,
-          interpretation: overall.interpretation,
-        }
-      : null,
+    overall: overallPayload,
     modules: moduleReports,
     strengths: [...allDims].sort((a, b) => b.normalized - a.normalized).slice(0, 3),
     developmentAreas: [...allDims].sort((a, b) => a.normalized - b.normalized).slice(0, 3),

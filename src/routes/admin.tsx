@@ -347,12 +347,8 @@ function AdminPage() {
     try {
       toast.info(`Menyiapkan laporan PDF untuk ${student.fullName}...`);
       const reportPayload = await fetchSingleReport({ data: { participantId: student.participantId } });
-      if (!reportPayload || !reportPayload.overall) {
-        const completed = student.session?.completedModulesCount ?? 0;
-        const total = student.session?.totalModulesCount ?? 9;
-        toast.error(
-          `Laporan PDF belum lengkap: ${student.fullName} baru menyelesaikan ${completed}/${total} modul asesmen.`,
-        );
+      if (!reportPayload) {
+        toast.error(`Data laporan ${student.fullName} tidak ditemukan.`);
         return;
       }
       const { downloadReportPdf } = await import("@/lib/report-pdf");
@@ -360,7 +356,7 @@ function AdminPage() {
       toast.success(`Laporan PDF ${student.fullName} berhasil diunduh!`);
     } catch (err) {
       console.error("Gagal membuat PDF:", err);
-      toast.error("Gagal mengunduh PDF. Pastikan seluruh sub-tes telah diselesaikan.");
+      toast.error("Gagal mengunduh file PDF siswa.");
     } finally {
       setDownloadingId(null);
     }
@@ -971,58 +967,59 @@ function AdminPage() {
                               <Eye className="size-4" />
                             </Button>
 
-                            {/* Tombol Unduh PDF per Siswa */}
-                            {isDone ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => void handleDownloadPdf(student)}
-                                disabled={downloadingId === student.participantId}
-                                title={`Unduh Laporan PDF ${student.fullName}`}
-                                className="h-8 px-2.5 text-xs font-semibold text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800 transition-colors shadow-2xs"
-                              >
-                                {downloadingId === student.participantId ? (
-                                  <>
-                                    <RefreshCw className="mr-1.5 size-3.5 animate-spin text-rose-600" />
-                                    <span>Mengunduh...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <FileDown className="mr-1.5 size-3.5 text-rose-600" />
-                                    <span>Export PDF</span>
-                                  </>
-                                )}
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() =>
-                                  toast.info(
-                                    `Siswa ${student.fullName} belum menyelesaikan seluruh asesmen (${completedCount}/${totalCount} modul). Laporan PDF baru tersedia setelah seluruh sub-tes selesai.`,
-                                  )
-                                }
-                                title="Asesmen belum selesai"
-                                className="h-8 px-2 text-xs text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50"
-                              >
-                                <FileDown className="mr-1 size-3.5 opacity-40" />
-                                <span className="text-[11px]">PDF</span>
-                              </Button>
-                            )}
+                            {/* Tombol Unduh PDF per Siswa (Bisa diekspor kapan saja) */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => void handleDownloadPdf(student)}
+                              disabled={downloadingId === student.participantId}
+                              title={
+                                isDone
+                                  ? `Unduh Laporan PDF Lengkap ${student.fullName}`
+                                  : `Unduh Laporan PDF Progres (${completedCount}/${totalCount} sub-tes) ${student.fullName}`
+                              }
+                              className={cn(
+                                "h-8 px-2.5 text-xs font-semibold transition-colors shadow-2xs",
+                                isDone
+                                  ? "text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800"
+                                  : "text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100 hover:text-amber-800",
+                              )}
+                            >
+                              {downloadingId === student.participantId ? (
+                                <>
+                                  <RefreshCw
+                                    className={cn(
+                                      "mr-1.5 size-3.5 animate-spin",
+                                      isDone ? "text-rose-600" : "text-amber-600",
+                                    )}
+                                  />
+                                  <span>Mengunduh...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <FileDown
+                                    className={cn("mr-1.5 size-3.5", isDone ? "text-rose-600" : "text-amber-600")}
+                                  />
+                                  <span>Export PDF</span>
+                                </>
+                              )}
+                            </Button>
 
                             {/* Tombol Buka Laporan Lengkap Web */}
-                            {isDone ? (
-                              <Button asChild size="sm" variant="outline" className="h-8 text-xs font-medium">
-                                <Link
-                                  to="/report"
-                                  search={{ participantId: student.participantId }}
-                                  target="_blank"
-                                  title="Buka Halaman Laporan Interaktif"
-                                >
-                                  <ExternalLink className="mr-1.5 size-3.5" /> Laporan
-                                </Link>
-                              </Button>
-                            ) : null}
+                            <Button asChild size="sm" variant="outline" className="h-8 text-xs font-medium">
+                              <Link
+                                to="/report"
+                                search={{ participantId: student.participantId }}
+                                target="_blank"
+                                title={
+                                  isDone
+                                    ? "Buka Halaman Laporan Interaktif"
+                                    : `Lihat Laporan Progres Interaktif (${completedCount}/${totalCount} modul)`
+                                }
+                              >
+                                <ExternalLink className="mr-1.5 size-3.5" /> Laporan
+                              </Link>
+                            </Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1149,17 +1146,29 @@ function AdminPage() {
 
             <div className="space-y-6 pt-2">
               {/* Overall readiness summary */}
-              {selectedStudent.session?.isCompleted && selectedStudent.session?.readinessScore != null ? (
+              {selectedStudent.session ? (
                 <div className="flex items-center justify-between rounded-xl bg-primary/5 border border-primary/20 p-4">
                   <div>
                     <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                      Indeks Kesiapan Calon Taruna
+                      {selectedStudent.session.isCompleted
+                        ? "Indeks Kesiapan Calon Taruna"
+                        : "Indeks Kesiapan (Progres)"}
                     </p>
                     <p className="mt-1 font-display text-3xl font-bold text-primary">
-                      {selectedStudent.session.readinessScore}%
+                      {selectedStudent.session.readinessScore != null
+                        ? `${selectedStudent.session.readinessScore}%`
+                        : "—"}
                     </p>
                     <p className="text-xs text-muted-foreground mt-0.5">
-                      Kategori: <span className="font-semibold text-foreground">{selectedStudent.session.readinessCategory}</span>
+                      Kategori:{" "}
+                      <span className="font-semibold text-foreground">
+                        {selectedStudent.session.readinessCategory || (selectedStudent.session.isCompleted ? "Terhitung" : "Dalam Proses")}
+                      </span>
+                      {!selectedStudent.session.isCompleted ? (
+                        <span className="ml-1 text-[11px] text-amber-600 font-medium">
+                          ({selectedStudent.session.completedModulesCount ?? 0}/{selectedStudent.session.totalModulesCount ?? 9} sub-tes)
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                   <div className="text-right">
@@ -1168,16 +1177,31 @@ function AdminPage() {
                       variant="outline"
                       onClick={() => void handleDownloadPdf(selectedStudent)}
                       disabled={downloadingId === selectedStudent.participantId}
-                      className="text-xs font-semibold text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800"
+                      className={cn(
+                        "text-xs font-semibold shadow-2xs",
+                        selectedStudent.session.isCompleted
+                          ? "text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800"
+                          : "text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100 hover:text-amber-800",
+                      )}
                     >
                       {downloadingId === selectedStudent.participantId ? (
                         <>
-                          <RefreshCw className="mr-1.5 size-3.5 animate-spin text-rose-600" />
+                          <RefreshCw
+                            className={cn(
+                              "mr-1.5 size-3.5 animate-spin",
+                              selectedStudent.session.isCompleted ? "text-rose-600" : "text-amber-600",
+                            )}
+                          />
                           <span>Menyiapkan PDF...</span>
                         </>
                       ) : (
                         <>
-                          <FileDown className="mr-1.5 size-3.5 text-rose-600" />
+                          <FileDown
+                            className={cn(
+                              "mr-1.5 size-3.5",
+                              selectedStudent.session.isCompleted ? "text-rose-600" : "text-amber-600",
+                            )}
+                          />
                           <span>Export PDF</span>
                         </>
                       )}
@@ -1252,39 +1276,49 @@ function AdminPage() {
                   Tutup
                 </Button>
                 <div className="flex items-center gap-2">
-                  {selectedStudent.session?.isCompleted ? (
-                    <>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-xs font-semibold text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800"
-                        onClick={() => void handleDownloadPdf(selectedStudent)}
-                        disabled={downloadingId === selectedStudent.participantId}
-                      >
-                        {downloadingId === selectedStudent.participantId ? (
-                          <>
-                            <RefreshCw className="mr-1.5 size-3.5 animate-spin text-rose-600" />
-                            <span>Menyiapkan PDF...</span>
-                          </>
-                        ) : (
-                          <>
-                            <FileDown className="mr-1.5 size-3.5 text-rose-600" />
-                            <span>Export PDF Siswa</span>
-                          </>
-                        )}
-                      </Button>
-                      <Button asChild size="sm" className="text-xs font-medium">
-                        <Link to="/report" search={{ participantId: selectedStudent.participantId }} target="_blank">
-                          <ExternalLink className="mr-1.5 size-3.5" /> Buka Laporan Lengkap
-                        </Link>
-                      </Button>
-                    </>
-                  ) : (
-                    <span className="text-xs text-muted-foreground italic">
-                      Asesmen belum selesai ({selectedStudent.session?.completedModulesCount ?? 0}/
-                      {selectedStudent.session?.totalModulesCount ?? 9} modul)
-                    </span>
-                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className={cn(
+                      "text-xs font-semibold shadow-2xs",
+                      selectedStudent.session?.isCompleted
+                        ? "text-rose-700 bg-rose-50 border-rose-200 hover:bg-rose-100 hover:text-rose-800"
+                        : "text-amber-700 bg-amber-50 border-amber-200 hover:bg-amber-100 hover:text-amber-800",
+                    )}
+                    onClick={() => void handleDownloadPdf(selectedStudent)}
+                    disabled={downloadingId === selectedStudent.participantId}
+                  >
+                    {downloadingId === selectedStudent.participantId ? (
+                      <>
+                        <RefreshCw
+                          className={cn(
+                            "mr-1.5 size-3.5 animate-spin",
+                            selectedStudent.session?.isCompleted ? "text-rose-600" : "text-amber-600",
+                          )}
+                        />
+                        <span>Menyiapkan PDF...</span>
+                      </>
+                    ) : (
+                      <>
+                        <FileDown
+                          className={cn(
+                            "mr-1.5 size-3.5",
+                            selectedStudent.session?.isCompleted ? "text-rose-600" : "text-amber-600",
+                          )}
+                        />
+                        <span>
+                          {selectedStudent.session?.isCompleted
+                            ? "Export PDF Siswa"
+                            : `Export PDF Progres (${selectedStudent.session?.completedModulesCount ?? 0}/${selectedStudent.session?.totalModulesCount ?? 9})`}
+                        </span>
+                      </>
+                    )}
+                  </Button>
+                  <Button asChild size="sm" className="text-xs font-medium">
+                    <Link to="/report" search={{ participantId: selectedStudent.participantId }} target="_blank">
+                      <ExternalLink className="mr-1.5 size-3.5" /> Buka Laporan Lengkap
+                    </Link>
+                  </Button>
                 </div>
               </div>
             </div>
